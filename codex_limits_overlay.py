@@ -26,12 +26,14 @@ from PySide6.QtWidgets import (
 
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 20_000
-WINDOW_WIDTH = 390
+WINDOW_WIDTH = 310
+TITLE_ICON_SIZE = 16
 
 
 TEXT = {
     "ru": {
         "title": "Лимиты Codex",
+        "title": "Оставшийся лимит",
         "starting": "запуск…",
         "refreshing": "обновление…",
         "error": "ошибка",
@@ -45,7 +47,7 @@ TEXT = {
         "quit": "Выйти",
     },
     "en": {
-        "title": "Codex limits",
+        "title": "Remaining limit",
         "starting": "starting…",
         "refreshing": "refresh…",
         "error": "error",
@@ -305,6 +307,15 @@ class Overlay(QWidget):
         self.root = QWidget(self)
         self.root.setObjectName("root")
 
+        self.title_icon_label = QLabel()
+        self.title_icon_label.setObjectName("titleIcon")
+        self.title_icon_label.setFixedSize(TITLE_ICON_SIZE, TITLE_ICON_SIZE)
+        gauge_icon_path = Path(__file__).with_name("gauge.svg")
+        if gauge_icon_path.exists():
+            self.title_icon_label.setPixmap(QIcon(str(gauge_icon_path)).pixmap(TITLE_ICON_SIZE, TITLE_ICON_SIZE))
+        else:
+            self.title_icon_label.setText("◷")
+
         self.title_label = QLabel(self.text["title"])
         self.title_label.setObjectName("title")
 
@@ -320,13 +331,15 @@ class Overlay(QWidget):
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(5)
+        header.addWidget(self.title_icon_label)
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.status_label)
 
         layout = QVBoxLayout(self.root)
-        layout.setContentsMargins(16, 12, 16, 14)
-        layout.setSpacing(7)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(6)
         layout.addLayout(header)
         layout.addWidget(self.account_label)
         layout.addLayout(self.buckets)
@@ -344,26 +357,30 @@ class Overlay(QWidget):
             QLabel {
                 color: #eeeeee;
                 font-family: Cascadia Mono, Consolas, Segoe UI;
-                font-size: 15px;
+                font-size: 14px;
             }
             QLabel#title {
                 color: #ffffff;
                 font-weight: 700;
-                font-size: 15px;
+                font-size: 14px;
             }
             QLabel#muted {
                 color: #b2b2b2;
-                font-size: 13px;
+                font-size: 12px;
             }
             QLabel#account {
                 color: #e2e2e2;
-                font-size: 14px;
+                font-size: 13px;
                 font-weight: 650;
             }
             QLabel#bucketName, QLabel#bucketPercent, QLabel#bucketReset {
                 color: #ffffff;
-                font-size: 15px;
+                font-size: 14px;
                 font-weight: 700;
+            }
+            QLabel#titleIcon {
+                color: #eeeeee;
+                font-size: 14px;
             }
             QLabel#bucketPercent {
                 qproperty-alignment: AlignCenter;
@@ -372,7 +389,7 @@ class Overlay(QWidget):
                 qproperty-alignment: AlignRight;
             }
             QProgressBar {
-                height: 9px;
+                height: 8px;
                 border: none;
                 border-radius: 3px;
                 background: rgba(255, 255, 255, 35);
