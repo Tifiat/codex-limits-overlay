@@ -1,4 +1,5 @@
 import json
+import locale
 import os
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QPoint
 from PySide6.QtGui import QAction, QCursor, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QGridLayout,
     QLabel,
     QMenu,
     QProgressBar,
@@ -24,6 +26,72 @@ from PySide6.QtWidgets import (
 
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 20_000
+WINDOW_WIDTH = 390
+
+
+TEXT = {
+    "ru": {
+        "title": "Лимиты Codex",
+        "starting": "запуск…",
+        "refreshing": "обновление…",
+        "error": "ошибка",
+        "unknown_account": "аккаунт неизвестен",
+        "no_limits": "лимиты не вернулись",
+        "five_hours": "5ч",
+        "week": "Неделя",
+        "show_hide": "Показать / скрыть",
+        "refresh_now": "Обновить сейчас",
+        "restart": "Переподключить",
+        "quit": "Выйти",
+    },
+    "en": {
+        "title": "Codex limits",
+        "starting": "starting…",
+        "refreshing": "refresh…",
+        "error": "error",
+        "unknown_account": "unknown account",
+        "no_limits": "no limits returned",
+        "five_hours": "5h",
+        "week": "Week",
+        "show_hide": "Show / Hide",
+        "refresh_now": "Refresh now",
+        "restart": "Restart connection",
+        "quit": "Quit",
+    },
+}
+
+MONTHS_RU = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
+MONTHS_EN = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+]
+
+
+def detect_russian_locale():
+    candidates = []
+    for key in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(key)
+        if value:
+            candidates.append(value)
+
+    for category in (locale.LC_CTYPE, locale.LC_TIME, locale.LC_MESSAGES):
+        try:
+            current = locale.getlocale(category)[0]
+        except Exception:
+            current = None
+        if current:
+            candidates.append(current)
+
+    for value in candidates:
+        normalized = str(value).lower()
+        if normalized.startswith("ru") or "russian" in normalized or "рус" in normalized:
+            return True
+
+    return False
 
 
 class CodexRpcError(RuntimeError):
@@ -216,6 +284,10 @@ class Overlay(QWidget):
         self.refreshing = False
         self.drag_pos = None
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
+        self.is_ru = detect_russian_locale()
+        self.text = TEXT["ru" if self.is_ru else "en"]
+        self.auth_path = Path(r"C:\Users\user\.codex") / "auth.json"
+        self.auth_mtime = self.get_auth_mtime()
 
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(
@@ -228,18 +300,18 @@ class Overlay(QWidget):
         self.root = QWidget(self)
         self.root.setObjectName("root")
 
-        self.title_label = QLabel("Codex limits")
+        self.title_label = QLabel(self.text["title"])
         self.title_label.setObjectName("title")
 
-        self.status_label = QLabel("запуск…")
+        self.status_label = QLabel(self.text["starting"])
         self.status_label.setObjectName("muted")
 
         self.account_label = QLabel("")
         self.account_label.setObjectName("account")
 
         self.buckets = QVBoxLayout()
-        self.buckets.setSpacing(5)
-        self.buckets.setContentsMargins(0, 2, 0, 0)
+        self.buckets.setSpacing(12)
+        self.buckets.setContentsMargins(0, 8, 0, 0)
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
@@ -248,8 +320,8 @@ class Overlay(QWidget):
         header.addWidget(self.status_label)
 
         layout = QVBoxLayout(self.root)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(4)
+        layout.setContentsMargins(16, 12, 16, 14)
+        layout.setSpacing(7)
         layout.addLayout(header)
         layout.addWidget(self.account_label)
         layout.addLayout(self.buckets)
@@ -260,55 +332,69 @@ class Overlay(QWidget):
 
         self.setStyleSheet("""
             QWidget#root {
-                background: rgba(22, 22, 24, 230);
+                background: rgba(20, 20, 22, 235);
                 border: 1px solid rgba(255, 255, 255, 35);
-                border-radius: 10px;
+                border-radius: 16px;
             }
             QLabel {
                 color: #eeeeee;
-                font-family: Segoe UI;
-                font-size: 12px;
+                font-family: Cascadia Mono, Consolas, Segoe UI;
+                font-size: 15px;
             }
             QLabel#title {
                 color: #ffffff;
-                font-weight: 650;
-                font-size: 12px;
+                font-weight: 700;
+                font-size: 15px;
             }
             QLabel#muted {
-                color: #9a9a9a;
-                font-size: 10px;
+                color: #b2b2b2;
+                font-size: 13px;
             }
             QLabel#account {
-                color: #bdbdbd;
-                font-size: 10px;
+                color: #e2e2e2;
+                font-size: 14px;
+                font-weight: 650;
+            }
+            QLabel#bucketName, QLabel#bucketPercent, QLabel#bucketReset {
+                color: #ffffff;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QLabel#bucketPercent {
+                qproperty-alignment: AlignCenter;
+            }
+            QLabel#bucketReset {
+                qproperty-alignment: AlignRight;
             }
             QProgressBar {
-                height: 5px;
+                height: 9px;
                 border: none;
-                border-radius: 2px;
+                border-radius: 3px;
                 background: rgba(255, 255, 255, 35);
                 text-align: center;
             }
             QProgressBar::chunk {
-                border-radius: 2px;
-                background: #d6d6d6;
+                border-radius: 3px;
+                background: #eeeeee;
             }
         """)
 
-        self.resize(255, 70)
+        self.setFixedWidth(WINDOW_WIDTH)
+        self.root.setFixedWidth(WINDOW_WIDTH)
+        self.resize(WINDOW_WIDTH, 120)
         self.restore_position()
 
         self.tray = QSystemTrayIcon(self)
         self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
 
         menu = QMenu()
-        show_action = QAction("Show / Hide", self)
+        show_action = QAction(self.text["show_hide"], self)
         show_action.triggered.connect(self.toggle_visible)
-        refresh_action = QAction("Refresh now", self)
+        refresh_action = QAction(self.text["refresh_now"], self)
         refresh_action.triggered.connect(self.refresh)
-        restart_action = QAction("Restart connection", self)
+        restart_action = QAction(self.text["restart"], self)
         restart_action.triggered.connect(self.restart_connection)
-        quit_action = QAction("Quit", self)
+        quit_action = QAction(self.text["quit"], self)
         quit_action.triggered.connect(self.quit_app)
 
         menu.addAction(show_action)
@@ -344,12 +430,73 @@ class Overlay(QWidget):
         self.settings.setValue("x", self.x())
         self.settings.setValue("y", self.y())
 
+    def get_auth_mtime(self):
+        try:
+            return self.auth_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
     def clear_buckets(self):
         while self.buckets.count():
             item = self.buckets.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
+
+    def bucket_title(self, duration, fallback):
+        if duration == 300:
+            return self.text["five_hours"]
+        if duration == 10080:
+            return self.text["week"]
+        if duration:
+            if duration % 1440 == 0:
+                days = duration // 1440
+                return f"{days}d" if not self.is_ru else f"{days}д"
+            if duration % 60 == 0:
+                hours = duration // 60
+                return f"{hours}h" if not self.is_ru else f"{hours}ч"
+            return f"{duration}m" if not self.is_ru else f"{duration}м"
+        return fallback or "Codex"
+
+    def format_reset(self, resets_at, duration):
+        if not resets_at:
+            return "?"
+
+        dt = datetime.fromtimestamp(int(resets_at))
+        if duration and duration >= 1440:
+            if self.is_ru:
+                return f"{dt.day} {MONTHS_RU[dt.month - 1]}"
+            return f"{dt.day} {MONTHS_EN[dt.month - 1]}"
+
+        return dt.strftime("%H:%M")
+
+    def sorted_limit_items(self, limits):
+        items = []
+        by_id = limits.get("rateLimitsByLimitId")
+
+        source_buckets = []
+        if isinstance(by_id, dict) and by_id:
+            source_buckets = list(by_id.values())
+        else:
+            single = limits.get("rateLimits")
+            if isinstance(single, dict):
+                source_buckets = [single]
+
+        for bucket in source_buckets:
+            name = bucket.get("limitName") or bucket.get("limitId") or "codex"
+
+            primary = bucket.get("primary")
+            if isinstance(primary, dict):
+                items.append((name, {"primary": primary}))
+
+            secondary = bucket.get("secondary")
+            if isinstance(secondary, dict):
+                items.append((name, {"primary": secondary}))
+
+        return sorted(
+            items,
+            key=lambda item: ((item[1].get("primary") or {}).get("windowDurationMins") or 999999999),
+        )
 
     def make_bucket_widget(self, name, bucket):
         primary = bucket.get("primary") or {}
@@ -358,29 +505,46 @@ class Overlay(QWidget):
         resets_at = primary.get("resetsAt")
 
         if used is None:
-            text = f"{name}: нет данных"
-            percent = 0
-        else:
-            percent = max(0, min(100, int(round(float(used)))))
-            left = max(0, 100 - percent)
+            left_percent = 0
+            percent_text = "?"
             reset_text = "?"
-            if resets_at:
-                reset_text = datetime.fromtimestamp(int(resets_at)).strftime("%H:%M")
-            dur_text = f"{duration}m" if duration else "?"
-            text = f"{name}: {percent}% used · {left}% left · reset {reset_text} · {dur_text}"
+        else:
+            used_percent = max(0, min(100, int(round(float(used)))))
+            left_percent = max(0, 100 - used_percent)
+            percent_text = f"{left_percent}%"
+            reset_text = self.format_reset(resets_at, duration)
 
         box = QWidget()
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(0, 0, 0, 0)
-        box_layout.setSpacing(2)
+        box_layout.setSpacing(5)
 
-        label = QLabel(text)
+        row = QGridLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setHorizontalSpacing(8)
+        row.setColumnStretch(0, 1)
+        row.setColumnStretch(1, 1)
+        row.setColumnStretch(2, 1)
+
+        title = QLabel(self.bucket_title(duration, name))
+        title.setObjectName("bucketName")
+
+        percent = QLabel(percent_text)
+        percent.setObjectName("bucketPercent")
+
+        reset = QLabel(reset_text)
+        reset.setObjectName("bucketReset")
+
+        row.addWidget(title, 0, 0, alignment=Qt.AlignLeft)
+        row.addWidget(percent, 0, 1, alignment=Qt.AlignCenter)
+        row.addWidget(reset, 0, 2, alignment=Qt.AlignRight)
+
         bar = QProgressBar()
         bar.setRange(0, 100)
-        bar.setValue(percent)
+        bar.setValue(left_percent)
         bar.setTextVisible(False)
 
-        box_layout.addWidget(label)
+        box_layout.addLayout(row)
         box_layout.addWidget(bar)
         return box
 
@@ -396,10 +560,17 @@ class Overlay(QWidget):
             return
 
         self.refreshing = True
-        self.status_label.setText("refresh…")
+        self.status_label.setText(self.text["refreshing"])
 
         def worker():
             try:
+                current_auth_mtime = self.get_auth_mtime()
+                if current_auth_mtime != self.auth_mtime:
+                    if self.client:
+                        self.client.close()
+                    self.client = None
+                    self.auth_mtime = current_auth_mtime
+
                 client = self.get_client()
                 account = client.request("account/read", {"refreshToken": False}, timeout=20)
                 limits = client.request("account/rateLimits/read", timeout=25)
@@ -413,45 +584,38 @@ class Overlay(QWidget):
         self.refreshing = False
 
         account_obj = (data.get("account") or {}).get("account") or {}
-        email = account_obj.get("email") or "unknown account"
+        email = account_obj.get("email") or self.text["unknown_account"]
         plan = account_obj.get("planType")
         self.account_label.setText(f"{email}" + (f" · {plan}" if plan else ""))
 
         limits = data.get("limits") or {}
-        by_id = limits.get("rateLimitsByLimitId")
-        single = limits.get("rateLimits")
 
         self.clear_buckets()
 
-        if isinstance(by_id, dict) and by_id:
-            for limit_id, bucket in sorted(by_id.items()):
-                name = bucket.get("limitName") or bucket.get("limitId") or limit_id
+        items = self.sorted_limit_items(limits)
+        if items:
+            for name, bucket in items:
                 self.buckets.addWidget(self.make_bucket_widget(name, bucket))
-        elif isinstance(single, dict):
-            name = single.get("limitName") or single.get("limitId") or "codex"
-            self.buckets.addWidget(self.make_bucket_widget(name, single))
         else:
-            label = QLabel("лимиты не вернулись")
+            label = QLabel(self.text["no_limits"])
             self.buckets.addWidget(label)
 
-        credits = limits.get("credits")
-        if credits:
-            credits_label = QLabel(f"credits: {json.dumps(credits, ensure_ascii=False)[:120]}")
-            credits_label.setObjectName("muted")
-            self.buckets.addWidget(credits_label)
-
         self.status_label.setText(datetime.now().strftime("%H:%M:%S"))
+        self.setFixedWidth(WINDOW_WIDTH)
+        self.root.setFixedWidth(WINDOW_WIDTH)
         self.adjustSize()
         self.save_position()
 
     def apply_error(self, text):
         self.refreshing = False
         self.clear_buckets()
-        self.account_label.setText("ошибка")
+        self.account_label.setText(self.text["error"])
         msg = QLabel(text[:260])
         msg.setWordWrap(True)
         self.buckets.addWidget(msg)
-        self.status_label.setText("error")
+        self.status_label.setText(self.text["error"])
+        self.setFixedWidth(WINDOW_WIDTH)
+        self.root.setFixedWidth(WINDOW_WIDTH)
         self.adjustSize()
 
     def restart_connection(self):
