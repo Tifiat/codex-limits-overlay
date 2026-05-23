@@ -42,23 +42,39 @@ class CodexAppServerClient:
         self._start()
         self._initialize()
 
-    def _find_codex_command(self):
-        codex = shutil.which("codex.cmd") or shutil.which("codex.exe") or shutil.which("codex")
+    def _build_codex_args(self):
+        appdata = os.environ.get("APPDATA")
+        node = shutil.which("node.exe") or shutil.which("node")
+
+        if appdata and node:
+            codex_js = (
+                Path(appdata)
+                / "npm"
+                / "node_modules"
+                / "@openai"
+                / "codex"
+                / "bin"
+                / "codex.js"
+            )
+            if codex_js.exists():
+                return [node, str(codex_js)]
+
+        codex = shutil.which("codex.exe") or shutil.which("codex.cmd") or shutil.which("codex")
         if not codex:
             raise CodexRpcError("Не найден codex в PATH. Проверь: where codex")
-        return codex
+
+        return [codex]
 
     def _start(self):
-        codex = self._find_codex_command()
+        args = self._build_codex_args() + ["app-server"]
+
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-        if codex.lower().endswith((".cmd", ".bat")):
-            comspec = os.environ.get("ComSpec", "cmd.exe")
-            args = [comspec, "/d", "/s", "/c", f'call "{codex}" app-server']
-        else:
-            args = [codex, "app-server"]
+        env = os.environ.copy()
+        env["CODEX_HOME"] = r"C:\Users\user\.codex"
+        env["NO_COLOR"] = "1"
 
         self.proc = subprocess.Popen(
             args,
@@ -70,6 +86,7 @@ class CodexAppServerClient:
             errors="replace",
             bufsize=1,
             creationflags=creationflags,
+            env=env,
         )
         self.alive = True
 
