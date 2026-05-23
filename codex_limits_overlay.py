@@ -78,7 +78,12 @@ def detect_russian_locale():
         if value:
             candidates.append(value)
 
-    for category in (locale.LC_CTYPE, locale.LC_TIME, locale.LC_MESSAGES):
+    locale_categories = [locale.LC_CTYPE, locale.LC_TIME]
+    lc_messages = getattr(locale, "LC_MESSAGES", None)
+    if lc_messages is not None:
+        locale_categories.append(lc_messages)
+
+    for category in locale_categories:
         try:
             current = locale.getlocale(category)[0]
         except Exception:
