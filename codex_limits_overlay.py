@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QPoint
-from PySide6.QtGui import QAction, QCursor, QIcon
+from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -26,13 +26,12 @@ from PySide6.QtWidgets import (
 
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 20_000
-WINDOW_WIDTH = 310
+WINDOW_WIDTH = 278
 TITLE_ICON_SIZE = 16
 
 
 TEXT = {
     "ru": {
-        "title": "Лимиты Codex",
         "title": "Оставшийся лимит",
         "starting": "запуск…",
         "refreshing": "обновление…",
@@ -312,7 +311,7 @@ class Overlay(QWidget):
         self.title_icon_label.setFixedSize(TITLE_ICON_SIZE, TITLE_ICON_SIZE)
         gauge_icon_path = Path(__file__).with_name("gauge.svg")
         if gauge_icon_path.exists():
-            self.title_icon_label.setPixmap(QIcon(str(gauge_icon_path)).pixmap(TITLE_ICON_SIZE, TITLE_ICON_SIZE))
+            self.title_icon_label.setPixmap(self.load_white_icon_pixmap(gauge_icon_path, TITLE_ICON_SIZE))
         else:
             self.title_icon_label.setText("◷")
 
@@ -326,20 +325,21 @@ class Overlay(QWidget):
         self.account_label.setObjectName("account")
 
         self.buckets = QVBoxLayout()
-        self.buckets.setSpacing(12)
-        self.buckets.setContentsMargins(0, 8, 0, 0)
+        self.buckets.setSpacing(8)
+        self.buckets.setContentsMargins(0, 6, 0, 0)
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(5)
         header.addWidget(self.title_icon_label)
         header.addWidget(self.title_label)
-        header.addStretch(1)
+        header.addSpacing(12)
         header.addWidget(self.status_label)
+        header.addStretch(1)
 
         layout = QVBoxLayout(self.root)
-        layout.setContentsMargins(12, 10, 12, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(5)
         layout.addLayout(header)
         layout.addWidget(self.account_label)
         layout.addLayout(self.buckets)
@@ -357,30 +357,30 @@ class Overlay(QWidget):
             QLabel {
                 color: #eeeeee;
                 font-family: Cascadia Mono, Consolas, Segoe UI;
-                font-size: 14px;
+                font-size: 13px;
             }
             QLabel#title {
                 color: #ffffff;
                 font-weight: 700;
-                font-size: 14px;
+                font-size: 13px;
             }
             QLabel#muted {
                 color: #b2b2b2;
-                font-size: 12px;
+                font-size: 10px;
             }
             QLabel#account {
                 color: #e2e2e2;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: 650;
             }
             QLabel#bucketName, QLabel#bucketPercent, QLabel#bucketReset {
                 color: #ffffff;
-                font-size: 14px;
+                font-size: 12px;
                 font-weight: 700;
             }
             QLabel#titleIcon {
                 color: #eeeeee;
-                font-size: 14px;
+                font-size: 13px;
             }
             QLabel#bucketPercent {
                 qproperty-alignment: AlignCenter;
@@ -389,14 +389,14 @@ class Overlay(QWidget):
                 qproperty-alignment: AlignRight;
             }
             QProgressBar {
-                height: 8px;
+                height: 5px;
                 border: none;
-                border-radius: 3px;
+                border-radius: 2px;
                 background: rgba(255, 255, 255, 35);
                 text-align: center;
             }
             QProgressBar::chunk {
-                border-radius: 3px;
+                border-radius: 2px;
                 background: #eeeeee;
             }
         """)
@@ -407,7 +407,10 @@ class Overlay(QWidget):
         self.restore_position()
 
         self.tray = QSystemTrayIcon(self)
-        self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        if gauge_icon_path.exists():
+            self.tray.setIcon(QIcon(self.load_white_icon_pixmap(gauge_icon_path, 24)))
+        else:
+            self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
 
         menu = QMenu()
         show_action = QAction(self.text["show_hide"], self)
@@ -451,6 +454,22 @@ class Overlay(QWidget):
     def save_position(self):
         self.settings.setValue("x", self.x())
         self.settings.setValue("y", self.y())
+
+    def load_white_icon_pixmap(self, path, size):
+        source = QIcon(str(path)).pixmap(size, size)
+        if source.isNull():
+            return QPixmap()
+
+        result = QPixmap(source.size())
+        result.fill(Qt.transparent)
+
+        painter = QPainter(result)
+        painter.drawPixmap(0, 0, source)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(result.rect(), QColor("#eeeeee"))
+        painter.end()
+
+        return result
 
     def get_auth_mtime(self):
         try:
@@ -539,7 +558,7 @@ class Overlay(QWidget):
         box = QWidget()
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(0, 0, 0, 0)
-        box_layout.setSpacing(5)
+        box_layout.setSpacing(3)
 
         row = QGridLayout()
         row.setContentsMargins(0, 0, 0, 0)
