@@ -552,6 +552,14 @@ class Overlay(QWidget):
         preset = self.preset()
         return max(160, preset["width"] - preset["margin_x"] * 2)
 
+    def limit_block_width(self):
+        max_width = self.content_width()
+        if not self.account_text_full:
+            return max_width
+
+        account_width = self.account_label.fontMetrics().horizontalAdvance(self.account_text_full)
+        return max(150, min(max_width, account_width))
+
     def apply_window_width(self):
         width = self.window_width()
         self.setFixedWidth(width)
@@ -776,7 +784,7 @@ class Overlay(QWidget):
         box_layout.setSpacing(self.preset()["row_spacing"])
 
         row_widget = QWidget()
-        row_widget.setFixedWidth(self.content_width())
+        row_widget.setFixedWidth(self.limit_block_width())
 
         row = QGridLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
@@ -800,7 +808,7 @@ class Overlay(QWidget):
 
         bar = QProgressBar()
         bar.setFixedHeight(self.preset()["progress_height"])
-        bar.setFixedWidth(self.content_width())
+        bar.setFixedWidth(self.limit_block_width())
         bar.setRange(0, 100)
         bar.setValue(left_percent)
         bar.setTextVisible(False)
