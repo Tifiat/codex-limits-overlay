@@ -459,20 +459,38 @@ class Overlay(QWidget):
         self.settings.setValue("y", self.y())
 
     def load_white_icon_pixmap(self, path, size):
-        source = QIcon(str(path)).pixmap(size, size)
+        source = QIcon(str(path)).pixmap(size * 4, size * 4)
         if source.isNull():
             return QPixmap()
 
-        result = QPixmap(source.size())
-        result.fill(Qt.transparent)
+        white = QPixmap(source.size())
+        white.fill(Qt.transparent)
 
-        painter = QPainter(result)
+        painter = QPainter(white)
         painter.drawPixmap(0, 0, source)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        painter.fillRect(result.rect(), QColor("#eeeeee"))
+        painter.fillRect(white.rect(), QColor("#eeeeee"))
         painter.end()
 
-        return result
+        image = white.toImage()
+        left = image.width()
+        top = image.height()
+        right = -1
+        bottom = -1
+
+        for y in range(image.height()):
+            for x in range(image.width()):
+                if image.pixelColor(x, y).alpha() > 0:
+                    left = min(left, x)
+                    top = min(top, y)
+                    right = max(right, x)
+                    bottom = max(bottom, y)
+
+        if right < left or bottom < top:
+            return white.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        trimmed = white.copy(left, top, right - left + 1, bottom - top + 1)
+        return trimmed.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
     def get_auth_mtime(self):
         try:
