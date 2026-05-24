@@ -25,8 +25,9 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Codex Limits Overlay"
-POLL_INTERVAL_MS = 300_000
+POLL_INTERVAL_MS = 20_000
 AUTH_CHECK_INTERVAL_MS = 20_000
+REFRESH_INTERVALS_MS = (10_000, 20_000, 30_000, 60_000, 300_000)
 DEFAULT_SIZE_PRESET = "small"
 SIZE_PRESETS = {
     "small": {
@@ -87,6 +88,12 @@ TEXT = {
         "week": "Неделя",
         "show_hide": "Показать / скрыть",
         "refresh_now": "Обновить сейчас",
+        "refresh_interval": "Интервал обновления",
+        "interval_10000": "10 секунд",
+        "interval_20000": "20 секунд",
+        "interval_30000": "30 секунд",
+        "interval_60000": "1 минута",
+        "interval_300000": "5 минут",
         "window_size": "Размер окна",
         "size_small": "Маленький",
         "size_medium": "Средний",
@@ -109,6 +116,12 @@ TEXT = {
         "week": "Week",
         "show_hide": "Show / Hide",
         "refresh_now": "Refresh now",
+        "refresh_interval": "Refresh interval",
+        "interval_10000": "10 seconds",
+        "interval_20000": "20 seconds",
+        "interval_30000": "30 seconds",
+        "interval_60000": "1 minute",
+        "interval_300000": "5 minutes",
         "window_size": "Window size",
         "size_small": "Small",
         "size_medium": "Medium",
@@ -369,6 +382,7 @@ class Overlay(QWidget):
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
+        self.refresh_interval_ms = self.load_refresh_interval()
         self.size_preset = self.load_size_preset()
         self.theme_mode = self.load_theme_mode()
         self.auth_path = Path(r"C:\Users\user\.codex") / "auth.json"
@@ -433,7 +447,7 @@ class Overlay(QWidget):
         self.tray.show()
 
         self.timer = QTimer(self)
-        self.timer.setInterval(POLL_INTERVAL_MS)
+        self.timer.setInterval(self.refresh_interval_ms)
         self.timer.timeout.connect(self.refresh)
 
         self.auth_timer = QTimer(self)
@@ -447,6 +461,15 @@ class Overlay(QWidget):
         QTimer.singleShot(150, self.refresh)
         self.timer.start()
         self.auth_timer.start()
+
+    def load_refresh_interval(self):
+        try:
+            interval = int(self.settings.value("refresh_interval_ms", POLL_INTERVAL_MS))
+        except (TypeError, ValueError):
+            interval = POLL_INTERVAL_MS
+        if interval not in REFRESH_INTERVALS_MS:
+            return POLL_INTERVAL_MS
+        return interval
 
     def load_size_preset(self):
         preset = str(self.settings.value("size_preset", DEFAULT_SIZE_PRESET))
@@ -474,11 +497,26 @@ class Overlay(QWidget):
 
         menu.addAction(show_action)
         menu.addAction(refresh_action)
+        menu.addMenu(self.build_refresh_interval_menu())
         menu.addMenu(self.build_size_menu())
         menu.addMenu(self.build_theme_menu())
         menu.addAction(restart_action)
         menu.addSeparator()
         menu.addAction(quit_action)
+
+        return menu
+
+    def build_refresh_interval_menu(self):
+        menu = QMenu(self.text["refresh_interval"], self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        for interval_ms in REFRESH_INTERVALS_MS:
+            action = QAction(self.text[f"interval_{interval_ms}"], group)
+            action.setCheckable(True)
+            action.setChecked(interval_ms == self.refresh_interval_ms)
+            action.triggered.connect(lambda checked=False, ms=interval_ms: self.set_refresh_interval(ms))
+            menu.addAction(action)
 
         return menu
 
@@ -509,6 +547,14 @@ class Overlay(QWidget):
             menu.addAction(action)
 
         return menu
+
+    def set_refresh_interval(self, interval_ms):
+        if interval_ms not in REFRESH_INTERVALS_MS:
+            return
+        self.refresh_interval_ms = interval_ms
+        self.settings.setValue("refresh_interval_ms", interval_ms)
+        self.timer.setInterval(interval_ms)
+        self.refresh()
 
     def set_size_preset(self, preset):
         if preset not in SIZE_PRESETS:
