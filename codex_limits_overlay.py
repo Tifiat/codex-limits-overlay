@@ -564,7 +564,7 @@ class Overlay(QWidget):
         box_layout.setSpacing(3)
 
         row_widget = QWidget()
-        row_widget.setFixedWidth(PROGRESS_WIDTH)
+        row_widget.setFixedWidth(CONTENT_WIDTH)
 
         row = QGridLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
@@ -588,7 +588,7 @@ class Overlay(QWidget):
 
         bar = QProgressBar()
         bar.setFixedHeight(4)
-        bar.setFixedWidth(PROGRESS_WIDTH)
+        bar.setFixedWidth(CONTENT_WIDTH)
         bar.setRange(0, 100)
         bar.setValue(left_percent)
         bar.setTextVisible(False)
