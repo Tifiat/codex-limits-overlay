@@ -400,8 +400,6 @@ class OverlayManager(QObject):
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
         self.refresh_interval_ms = self.load_refresh_interval()
-        self.size_preset = self.load_size_preset()
-        self.theme_mode = self.load_theme_mode()
         self.auth_path = Path(r"C:\Users\user\.codex") / "auth.json"
         self.auth_mtime = self.get_auth_mtime()
 
@@ -418,10 +416,10 @@ class OverlayManager(QObject):
         self.error_ready.connect(self.apply_error_to_windows)
 
     def start(self):
-        positions = self.load_window_positions()
-        if positions:
-            for position in positions:
-                window = self.create_window(position=position)
+        states = self.load_window_states()
+        if states:
+            for state in states:
+                window = self.create_window(state=state)
                 window.show()
         else:
             window = self.create_window()
@@ -440,19 +438,7 @@ class OverlayManager(QObject):
             return POLL_INTERVAL_MS
         return interval
 
-    def load_size_preset(self):
-        preset = str(self.settings.value("size_preset", DEFAULT_SIZE_PRESET))
-        if preset not in SIZE_PRESETS:
-            return DEFAULT_SIZE_PRESET
-        return preset
-
-    def load_theme_mode(self):
-        mode = str(self.settings.value("theme", "dark"))
-        if mode not in THEME_MODES:
-            return "dark"
-        return mode
-
-    def load_window_positions(self):
+    def load_window_states(self):
         try:
             count = int(self.settings.value("window_count", 0))
         except (TypeError, ValueError):
@@ -460,33 +446,61 @@ class OverlayManager(QObject):
         if count <= 0:
             return []
 
-        positions = []
+        states = []
         for index in range(count):
             x = self.settings.value(f"window_{index}_x", None)
             y = self.settings.value(f"window_{index}_y", None)
             if x is None or y is None:
                 continue
             try:
-                positions.append((int(x), int(y)))
+                state = {
+                    "position": (int(x), int(y)),
+                    "size_preset": str(self.settings.value(f"window_{index}_size_preset", "")),
+                    "theme_mode": str(self.settings.value(f"window_{index}_theme", "")),
+                }
+                states.append(state)
             except (TypeError, ValueError):
                 continue
 
-        return positions
+        return states
 
     def save_window_positions(self):
         visible_windows = list(self.windows)
         self.settings.setValue("window_count", len(visible_windows))
 
         for index, window in enumerate(visible_windows):
+            window.settings_index = index
             self.settings.setValue(f"window_{index}_x", window.x())
             self.settings.setValue(f"window_{index}_y", window.y())
+            self.settings.setValue(f"window_{index}_size_preset", window.size_preset)
+            self.settings.setValue(f"window_{index}_theme", window.theme_mode)
             if index == 0:
                 self.settings.setValue("x", window.x())
                 self.settings.setValue("y", window.y())
+                self.settings.setValue("size_preset", window.size_preset)
+                self.settings.setValue("theme", window.theme_mode)
 
-    def create_window(self, source_window=None, position=None):
-        window = Overlay(self, is_primary=not self.windows)
+    def create_window(self, source_window=None, state=None):
+        position = None
+        size_preset = None
+        theme_mode = None
+        if state:
+            position = state.get("position")
+            size_preset = state.get("size_preset")
+            theme_mode = state.get("theme_mode")
+        elif source_window:
+            size_preset = source_window.size_preset
+            theme_mode = source_window.theme_mode
+
+        window = Overlay(
+            self,
+            is_primary=not self.windows,
+            settings_index=len(self.windows),
+            initial_size_preset=size_preset,
+            initial_theme_mode=theme_mode,
+        )
         self.windows.append(window)
+        window.save_window_settings()
 
         if position:
             window.move(*position)
@@ -525,16 +539,6 @@ class OverlayManager(QObject):
     def apply_settings_to_windows(self, force_resize=False):
         for window in self.windows:
             window.sync_settings()
-            window.apply_window_width()
-            window.apply_style()
-            window.apply_layout_metrics()
-            window.apply_title_icon()
-            window.apply_tray_icon()
-            window.apply_account_elide()
-            if self.last_data:
-                window.apply_data(self.last_data, force_resize=True)
-            elif force_resize:
-                window.adjustSize()
             window.rebuild_context_menu()
 
     def set_refresh_interval(self, interval_ms):
@@ -545,20 +549,6 @@ class OverlayManager(QObject):
         self.timer.setInterval(interval_ms)
         self.apply_settings_to_windows()
         self.refresh()
-
-    def set_size_preset(self, preset):
-        if preset not in SIZE_PRESETS:
-            return
-        self.size_preset = preset
-        self.settings.setValue("size_preset", preset)
-        self.apply_settings_to_windows(force_resize=True)
-
-    def set_theme_mode(self, mode):
-        if mode not in THEME_MODES:
-            return
-        self.theme_mode = mode
-        self.settings.setValue("theme", mode)
-        self.apply_settings_to_windows()
 
     def get_auth_mtime(self):
         try:
@@ -658,11 +648,21 @@ class Overlay(QWidget):
     limits_ready = Signal(dict)
     error_ready = Signal(str)
 
-    def __init__(self, manager, is_primary=False):
+    def __init__(
+        self,
+        manager,
+        is_primary=False,
+        settings_index=0,
+        initial_size_preset=None,
+        initial_theme_mode=None,
+    ):
         super().__init__()
 
         self.manager = manager
         self.is_primary = is_primary
+        self.settings_index = settings_index
+        self.initial_size_preset = initial_size_preset
+        self.initial_theme_mode = initial_theme_mode
         self.force_close = False
         self.drag_pos = None
         self.last_data = None
@@ -671,6 +671,8 @@ class Overlay(QWidget):
         self.no_limits_label = None
         self.error_label = None
         self.sync_settings()
+        self.initial_size_preset = None
+        self.initial_theme_mode = None
 
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(
@@ -733,8 +735,30 @@ class Overlay(QWidget):
         self.is_ru = self.manager.is_ru
         self.text = self.manager.text
         self.refresh_interval_ms = self.manager.refresh_interval_ms
-        self.size_preset = self.manager.size_preset
-        self.theme_mode = self.manager.theme_mode
+        self.size_preset = self.load_size_preset()
+        self.theme_mode = self.load_theme_mode()
+
+    def load_size_preset(self):
+        preset = self.initial_size_preset
+        if preset not in SIZE_PRESETS:
+            preset = str(self.settings.value(
+                f"window_{self.settings_index}_size_preset",
+                self.settings.value("size_preset", DEFAULT_SIZE_PRESET),
+            ))
+        if preset not in SIZE_PRESETS:
+            return DEFAULT_SIZE_PRESET
+        return preset
+
+    def load_theme_mode(self):
+        mode = self.initial_theme_mode
+        if mode not in THEME_MODES:
+            mode = str(self.settings.value(
+                f"window_{self.settings_index}_theme",
+                self.settings.value("theme", "dark"),
+            ))
+        if mode not in THEME_MODES:
+            return "dark"
+        return mode
 
     def build_context_menu(self):
         menu = QMenu()
@@ -786,7 +810,7 @@ class Overlay(QWidget):
             action = QAction(self.text[f"size_{preset}"], group)
             action.setCheckable(True)
             action.setChecked(preset == self.size_preset)
-            action.triggered.connect(lambda checked=False, value=preset: self.manager.set_size_preset(value))
+            action.triggered.connect(lambda checked=False, value=preset: self.set_size_preset(value))
             menu.addAction(action)
 
         return menu
@@ -800,7 +824,7 @@ class Overlay(QWidget):
             action = QAction(self.text[f"theme_{mode}"], group)
             action.setCheckable(True)
             action.setChecked(mode == self.theme_mode)
-            action.triggered.connect(lambda checked=False, value=mode: self.manager.set_theme_mode(value))
+            action.triggered.connect(lambda checked=False, value=mode: self.set_theme_mode(value))
             menu.addAction(action)
 
         return menu
@@ -808,6 +832,39 @@ class Overlay(QWidget):
     def rebuild_context_menu(self):
         self.context_menu = self.build_context_menu()
         self.tray.setContextMenu(self.context_menu)
+
+    def set_size_preset(self, preset):
+        if preset not in SIZE_PRESETS:
+            return
+        self.size_preset = preset
+        self.save_window_settings()
+        self.apply_window_width()
+        self.apply_style()
+        self.apply_layout_metrics()
+        self.apply_title_icon()
+        self.apply_account_elide()
+        if self.last_data:
+            self.apply_data(self.last_data, force_resize=True)
+        else:
+            self.adjustSize()
+        self.rebuild_context_menu()
+
+    def set_theme_mode(self, mode):
+        if mode not in THEME_MODES:
+            return
+        self.theme_mode = mode
+        self.save_window_settings()
+        self.apply_style()
+        self.apply_title_icon()
+        self.apply_tray_icon()
+        self.rebuild_context_menu()
+
+    def save_window_settings(self):
+        self.settings.setValue(f"window_{self.settings_index}_size_preset", self.size_preset)
+        self.settings.setValue(f"window_{self.settings_index}_theme", self.theme_mode)
+        if self.is_primary:
+            self.settings.setValue("size_preset", self.size_preset)
+            self.settings.setValue("theme", self.theme_mode)
 
     def restore_position(self):
         x = self.settings.value("x", None)
