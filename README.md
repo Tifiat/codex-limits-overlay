@@ -55,6 +55,17 @@ npm install -g @openai/codex
 
 The exe does not include Node.js or Codex CLI.
 
+## GitHub Actions Builds
+
+GitHub Actions builds the Windows artifact on tag `v*` or a manual workflow run.
+
+The release zip contains only the overlay app. Node.js and Codex CLI are not bundled.
+Install Codex CLI separately:
+
+```powershell
+npm install -g @openai/codex
+```
+
 ## Important Notes
 
 - The app does not store OpenAI tokens.
