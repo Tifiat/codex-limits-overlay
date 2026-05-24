@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal, QSettings
+from PySide6.QtCore import Qt, QObject, QTimer, Signal, QSettings
 from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -103,6 +103,8 @@ TEXT = {
         "week": "Неделя",
         "show_hide": "Показать / скрыть",
         "refresh_now": "Обновить сейчас",
+        "clone_window": "Клонировать окно",
+        "delete_clone": "Удалить клон",
         "refresh_interval": "Интервал обновления",
         "interval_10000": "10 секунд",
         "interval_20000": "20 секунд",
@@ -131,6 +133,8 @@ TEXT = {
         "week": "Week",
         "show_hide": "Show / Hide",
         "refresh_now": "Refresh now",
+        "clone_window": "Clone window",
+        "delete_clone": "Delete clone",
         "refresh_interval": "Refresh interval",
         "interval_10000": "10 seconds",
         "interval_20000": "20 seconds",
@@ -381,22 +385,17 @@ class CodexAppServerClient:
                     pass
 
 
-class Overlay(QWidget):
+class OverlayManager(QObject):
     data_ready = Signal(dict)
     limits_ready = Signal(dict)
     error_ready = Signal(str)
 
     def __init__(self):
         super().__init__()
-
+        self.windows = []
         self.client = None
         self.refreshing = False
-        self.drag_pos = None
         self.last_data = None
-        self.account_text_full = ""
-        self.limit_rows = {}
-        self.no_limits_label = None
-        self.error_label = None
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
@@ -405,6 +404,229 @@ class Overlay(QWidget):
         self.theme_mode = self.load_theme_mode()
         self.auth_path = Path(r"C:\Users\user\.codex") / "auth.json"
         self.auth_mtime = self.get_auth_mtime()
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(self.refresh_interval_ms)
+        self.timer.timeout.connect(self.refresh)
+
+        self.auth_timer = QTimer(self)
+        self.auth_timer.setInterval(AUTH_CHECK_INTERVAL_MS)
+        self.auth_timer.timeout.connect(self.check_auth_file)
+
+        self.data_ready.connect(self.apply_data_to_windows)
+        self.limits_ready.connect(self.apply_limits_to_windows)
+        self.error_ready.connect(self.apply_error_to_windows)
+
+    def start(self):
+        window = self.create_window()
+        window.show()
+        QTimer.singleShot(150, self.refresh)
+        self.timer.start()
+        self.auth_timer.start()
+
+    def load_refresh_interval(self):
+        try:
+            interval = int(self.settings.value("refresh_interval_ms", POLL_INTERVAL_MS))
+        except (TypeError, ValueError):
+            interval = POLL_INTERVAL_MS
+        if interval not in REFRESH_INTERVALS_MS:
+            return POLL_INTERVAL_MS
+        return interval
+
+    def load_size_preset(self):
+        preset = str(self.settings.value("size_preset", DEFAULT_SIZE_PRESET))
+        if preset not in SIZE_PRESETS:
+            return DEFAULT_SIZE_PRESET
+        return preset
+
+    def load_theme_mode(self):
+        mode = str(self.settings.value("theme", "dark"))
+        if mode not in THEME_MODES:
+            return "dark"
+        return mode
+
+    def create_window(self, source_window=None):
+        window = Overlay(self, is_primary=not self.windows)
+        self.windows.append(window)
+
+        if source_window:
+            window.move(source_window.x() + 24, source_window.y() + 24)
+
+        if self.last_data:
+            window.apply_data(self.last_data, force_resize=True)
+
+        self.refresh_window_menus()
+        return window
+
+    def clone_window(self, source_window):
+        window = self.create_window(source_window)
+        window.show()
+
+    def remove_window(self, window):
+        if len(self.windows) <= 1:
+            self.refresh_window_menus()
+            return
+
+        if window in self.windows:
+            self.windows.remove(window)
+        if window.is_primary and self.windows:
+            self.windows[0].is_primary = True
+        window.force_close = True
+        window.tray.hide()
+        window.close()
+        window.deleteLater()
+        self.refresh_window_menus()
+
+    def refresh_window_menus(self):
+        for window in self.windows:
+            window.rebuild_context_menu()
+
+    def apply_settings_to_windows(self, force_resize=False):
+        for window in self.windows:
+            window.sync_settings()
+            window.apply_window_width()
+            window.apply_style()
+            window.apply_layout_metrics()
+            window.apply_title_icon()
+            window.apply_tray_icon()
+            window.apply_account_elide()
+            if self.last_data:
+                window.apply_data(self.last_data, force_resize=True)
+            elif force_resize:
+                window.adjustSize()
+            window.rebuild_context_menu()
+
+    def set_refresh_interval(self, interval_ms):
+        if interval_ms not in REFRESH_INTERVALS_MS:
+            return
+        self.refresh_interval_ms = interval_ms
+        self.settings.setValue("refresh_interval_ms", interval_ms)
+        self.timer.setInterval(interval_ms)
+        self.apply_settings_to_windows()
+        self.refresh()
+
+    def set_size_preset(self, preset):
+        if preset not in SIZE_PRESETS:
+            return
+        self.size_preset = preset
+        self.settings.setValue("size_preset", preset)
+        self.apply_settings_to_windows(force_resize=True)
+
+    def set_theme_mode(self, mode):
+        if mode not in THEME_MODES:
+            return
+        self.theme_mode = mode
+        self.settings.setValue("theme", mode)
+        self.apply_settings_to_windows()
+
+    def get_auth_mtime(self):
+        try:
+            return self.auth_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def get_client(self):
+        if self.client is None or not self.client.alive:
+            if self.client:
+                self.client.close()
+            self.client = CodexAppServerClient(self.handle_rate_limits_notification)
+        return self.client
+
+    def handle_rate_limits_notification(self, msg):
+        limits = self.extract_limits_from_notification(msg)
+        if limits:
+            self.limits_ready.emit(limits)
+
+    def extract_limits_from_notification(self, msg):
+        params = msg.get("params")
+        if not isinstance(params, dict):
+            return {}
+
+        for key in ("limits", "rateLimits"):
+            value = params.get(key)
+            if isinstance(value, dict):
+                return value
+
+        return params
+
+    def check_auth_file(self):
+        current_auth_mtime = self.get_auth_mtime()
+        if current_auth_mtime == self.auth_mtime:
+            return
+
+        self.auth_mtime = current_auth_mtime
+        if self.client:
+            self.client.close()
+            self.client = None
+        self.refresh()
+
+    def refresh(self):
+        if self.refreshing:
+            return
+
+        self.refreshing = True
+
+        def worker():
+            try:
+                current_auth_mtime = self.get_auth_mtime()
+                if current_auth_mtime != self.auth_mtime:
+                    if self.client:
+                        self.client.close()
+                    self.auth_mtime = current_auth_mtime
+                    self.client = None
+
+                client = self.get_client()
+                account = client.request("account/read", {"refreshToken": False}, timeout=20)
+                limits = client.request("account/rateLimits/read", timeout=25)
+                self.data_ready.emit({"account": account, "limits": limits})
+            except Exception as exc:
+                self.error_ready.emit(str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def apply_data_to_windows(self, data):
+        self.refreshing = False
+        self.last_data = data
+        for window in self.windows:
+            window.apply_data(data)
+
+    def apply_limits_to_windows(self, limits):
+        if self.last_data:
+            self.last_data = {**self.last_data, "limits": limits}
+        for window in self.windows:
+            window.apply_limits_update(limits)
+
+    def apply_error_to_windows(self, text):
+        self.refreshing = False
+        for window in self.windows:
+            window.apply_error(text)
+
+    def quit_app(self):
+        for window in self.windows:
+            window.save_position()
+        if self.client:
+            self.client.close()
+        QApplication.quit()
+
+
+class Overlay(QWidget):
+    data_ready = Signal(dict)
+    limits_ready = Signal(dict)
+    error_ready = Signal(str)
+
+    def __init__(self, manager, is_primary=False):
+        super().__init__()
+
+        self.manager = manager
+        self.is_primary = is_primary
+        self.force_close = False
+        self.drag_pos = None
+        self.last_data = None
+        self.account_text_full = ""
+        self.limit_rows = {}
+        self.no_limits_label = None
+        self.error_label = None
+        self.sync_settings()
 
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(
@@ -451,7 +673,8 @@ class Overlay(QWidget):
         self.apply_title_icon()
         self.apply_window_width()
         self.resize(self.window_width(), 120)
-        self.restore_position()
+        if self.is_primary:
+            self.restore_position()
 
         self.tray = QSystemTrayIcon(self)
         self.apply_tray_icon()
@@ -461,42 +684,13 @@ class Overlay(QWidget):
         self.tray.activated.connect(self.on_tray_activated)
         self.tray.show()
 
-        self.timer = QTimer(self)
-        self.timer.setInterval(self.refresh_interval_ms)
-        self.timer.timeout.connect(self.refresh)
-
-        self.auth_timer = QTimer(self)
-        self.auth_timer.setInterval(AUTH_CHECK_INTERVAL_MS)
-        self.auth_timer.timeout.connect(self.check_auth_file)
-
-        self.data_ready.connect(self.apply_data)
-        self.limits_ready.connect(self.apply_limits_update)
-        self.error_ready.connect(self.apply_error)
-
-        QTimer.singleShot(150, self.refresh)
-        self.timer.start()
-        self.auth_timer.start()
-
-    def load_refresh_interval(self):
-        try:
-            interval = int(self.settings.value("refresh_interval_ms", POLL_INTERVAL_MS))
-        except (TypeError, ValueError):
-            interval = POLL_INTERVAL_MS
-        if interval not in REFRESH_INTERVALS_MS:
-            return POLL_INTERVAL_MS
-        return interval
-
-    def load_size_preset(self):
-        preset = str(self.settings.value("size_preset", DEFAULT_SIZE_PRESET))
-        if preset not in SIZE_PRESETS:
-            return DEFAULT_SIZE_PRESET
-        return preset
-
-    def load_theme_mode(self):
-        mode = str(self.settings.value("theme", "dark"))
-        if mode not in THEME_MODES:
-            return "dark"
-        return mode
+    def sync_settings(self):
+        self.settings = self.manager.settings
+        self.is_ru = self.manager.is_ru
+        self.text = self.manager.text
+        self.refresh_interval_ms = self.manager.refresh_interval_ms
+        self.size_preset = self.manager.size_preset
+        self.theme_mode = self.manager.theme_mode
 
     def build_context_menu(self):
         menu = QMenu()
@@ -504,12 +698,19 @@ class Overlay(QWidget):
         show_action = QAction(self.text["show_hide"], self)
         show_action.triggered.connect(self.toggle_visible)
         refresh_action = QAction(self.text["refresh_now"], self)
-        refresh_action.triggered.connect(self.refresh)
+        refresh_action.triggered.connect(self.manager.refresh)
+        clone_action = QAction(self.text["clone_window"], self)
+        clone_action.triggered.connect(lambda: self.manager.clone_window(self))
+        delete_action = QAction(self.text["delete_clone"], self)
+        delete_action.setEnabled(len(self.manager.windows) > 1)
+        delete_action.triggered.connect(lambda: self.manager.remove_window(self))
         quit_action = QAction(self.text["quit"], self)
-        quit_action.triggered.connect(self.quit_app)
+        quit_action.triggered.connect(self.manager.quit_app)
 
         menu.addAction(show_action)
         menu.addAction(refresh_action)
+        menu.addAction(clone_action)
+        menu.addAction(delete_action)
         menu.addMenu(self.build_refresh_interval_menu())
         menu.addMenu(self.build_size_menu())
         menu.addMenu(self.build_theme_menu())
@@ -527,7 +728,7 @@ class Overlay(QWidget):
             action = QAction(self.text[f"interval_{interval_ms}"], group)
             action.setCheckable(True)
             action.setChecked(interval_ms == self.refresh_interval_ms)
-            action.triggered.connect(lambda checked=False, ms=interval_ms: self.set_refresh_interval(ms))
+            action.triggered.connect(lambda checked=False, ms=interval_ms: self.manager.set_refresh_interval(ms))
             menu.addAction(action)
 
         return menu
@@ -541,7 +742,7 @@ class Overlay(QWidget):
             action = QAction(self.text[f"size_{preset}"], group)
             action.setCheckable(True)
             action.setChecked(preset == self.size_preset)
-            action.triggered.connect(lambda checked=False, value=preset: self.set_size_preset(value))
+            action.triggered.connect(lambda checked=False, value=preset: self.manager.set_size_preset(value))
             menu.addAction(action)
 
         return menu
@@ -555,42 +756,14 @@ class Overlay(QWidget):
             action = QAction(self.text[f"theme_{mode}"], group)
             action.setCheckable(True)
             action.setChecked(mode == self.theme_mode)
-            action.triggered.connect(lambda checked=False, value=mode: self.set_theme_mode(value))
+            action.triggered.connect(lambda checked=False, value=mode: self.manager.set_theme_mode(value))
             menu.addAction(action)
 
         return menu
 
-    def set_refresh_interval(self, interval_ms):
-        if interval_ms not in REFRESH_INTERVALS_MS:
-            return
-        self.refresh_interval_ms = interval_ms
-        self.settings.setValue("refresh_interval_ms", interval_ms)
-        self.timer.setInterval(interval_ms)
-        self.refresh()
-
-    def set_size_preset(self, preset):
-        if preset not in SIZE_PRESETS:
-            return
-        self.size_preset = preset
-        self.settings.setValue("size_preset", preset)
-        self.apply_window_width()
-        self.apply_style()
-        self.apply_layout_metrics()
-        self.apply_title_icon()
-        self.apply_account_elide()
-        if self.last_data:
-            self.apply_data(self.last_data, force_resize=True)
-        else:
-            self.adjustSize()
-
-    def set_theme_mode(self, mode):
-        if mode not in THEME_MODES:
-            return
-        self.theme_mode = mode
-        self.settings.setValue("theme", mode)
-        self.apply_style()
-        self.apply_title_icon()
-        self.apply_tray_icon()
+    def rebuild_context_menu(self):
+        self.context_menu = self.build_context_menu()
+        self.tray.setContextMenu(self.context_menu)
 
     def restore_position(self):
         x = self.settings.value("x", None)
@@ -602,6 +775,8 @@ class Overlay(QWidget):
             self.move(screen.right() - self.width() - 30, screen.top() + 80)
 
     def save_position(self):
+        if not self.is_primary:
+            return
         self.settings.setValue("x", self.x())
         self.settings.setValue("y", self.y())
 
@@ -814,19 +989,6 @@ class Overlay(QWidget):
         trimmed = white.copy(left, top, right - left + 1, bottom - top + 1)
         return trimmed.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-    def get_auth_mtime(self):
-        try:
-            return self.auth_path.stat().st_mtime_ns
-        except OSError:
-            return None
-
-    def clear_buckets(self):
-        while self.buckets.count():
-            item = self.buckets.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
     def bucket_title(self, duration, fallback):
         if duration == 300:
             return self.text["five_hours"]
@@ -998,67 +1160,7 @@ class Overlay(QWidget):
             self.buckets.addWidget(self.error_label)
         return self.error_label
 
-    def get_client(self):
-        if self.client is None or not self.client.alive:
-            if self.client:
-                self.client.close()
-            self.client = CodexAppServerClient(self.handle_rate_limits_notification)
-        return self.client
-
-    def handle_rate_limits_notification(self, msg):
-        limits = self.extract_limits_from_notification(msg)
-        if limits:
-            self.limits_ready.emit(limits)
-
-    def extract_limits_from_notification(self, msg):
-        params = msg.get("params")
-        if not isinstance(params, dict):
-            return {}
-
-        for key in ("limits", "rateLimits"):
-            value = params.get(key)
-            if isinstance(value, dict):
-                return value
-
-        return params
-
-    def check_auth_file(self):
-        current_auth_mtime = self.get_auth_mtime()
-        if current_auth_mtime == self.auth_mtime:
-            return
-
-        self.auth_mtime = current_auth_mtime
-        if self.client:
-            self.client.close()
-            self.client = None
-        self.refresh()
-
-    def refresh(self):
-        if self.refreshing:
-            return
-
-        self.refreshing = True
-
-        def worker():
-            try:
-                current_auth_mtime = self.get_auth_mtime()
-                if current_auth_mtime != self.auth_mtime:
-                    if self.client:
-                        self.client.close()
-                    self.auth_mtime = current_auth_mtime
-                    self.client = None
-
-                client = self.get_client()
-                account = client.request("account/read", {"refreshToken": False}, timeout=20)
-                limits = client.request("account/rateLimits/read", timeout=25)
-                self.data_ready.emit({"account": account, "limits": limits})
-            except Exception as exc:
-                self.error_ready.emit(str(exc))
-
-        threading.Thread(target=worker, daemon=True).start()
-
     def apply_data(self, data, force_resize=False):
-        self.refreshing = False
         self.last_data = data
 
         account_obj = (data.get("account") or {}).get("account") or {}
@@ -1127,7 +1229,6 @@ class Overlay(QWidget):
             self.save_position()
 
     def apply_error(self, text):
-        self.refreshing = False
         self.account_label.setText(self.text["error"])
         self.account_text_full = ""
         self.hide_limit_rows()
@@ -1146,12 +1247,6 @@ class Overlay(QWidget):
         if reason == QSystemTrayIcon.Trigger:
             self.toggle_visible()
 
-    def quit_app(self):
-        self.save_position()
-        if self.client:
-            self.client.close()
-        QApplication.quit()
-
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
@@ -1169,16 +1264,19 @@ class Overlay(QWidget):
         self.save_position()
 
     def closeEvent(self, event):
-        event.ignore()
-        self.hide()
+        if self.force_close:
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
 
 
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    overlay = Overlay()
-    overlay.show()
+    manager = OverlayManager()
+    manager.start()
 
     sys.exit(app.exec())
 
