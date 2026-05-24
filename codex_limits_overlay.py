@@ -118,7 +118,6 @@ TEXT = {
         "theme_dark": "Тёмная",
         "theme_light": "Светлая",
         "theme_auto": "Авто",
-        "restart": "Переподключить",
         "quit": "Выйти",
     },
     "en": {
@@ -147,7 +146,6 @@ TEXT = {
         "theme_dark": "Dark",
         "theme_light": "Light",
         "theme_auto": "Auto",
-        "restart": "Restart connection",
         "quit": "Quit",
     },
 }
@@ -504,8 +502,6 @@ class Overlay(QWidget):
         show_action.triggered.connect(self.toggle_visible)
         refresh_action = QAction(self.text["refresh_now"], self)
         refresh_action.triggered.connect(self.refresh)
-        restart_action = QAction(self.text["restart"], self)
-        restart_action.triggered.connect(self.restart_connection)
         quit_action = QAction(self.text["quit"], self)
         quit_action.triggered.connect(self.quit_app)
 
@@ -514,7 +510,6 @@ class Overlay(QWidget):
         menu.addMenu(self.build_refresh_interval_menu())
         menu.addMenu(self.build_size_menu())
         menu.addMenu(self.build_theme_menu())
-        menu.addAction(restart_action)
         menu.addSeparator()
         menu.addAction(quit_action)
 
@@ -1038,12 +1033,6 @@ class Overlay(QWidget):
         self.buckets.addWidget(msg)
         self.apply_window_width()
         self.adjustSize()
-
-    def restart_connection(self):
-        if self.client:
-            self.client.close()
-            self.client = None
-        self.refresh()
 
     def toggle_visible(self):
         self.setVisible(not self.isVisible())
