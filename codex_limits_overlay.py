@@ -696,6 +696,9 @@ class Overlay(QWidget):
         self.title_icon_label.setObjectName("titleIcon")
         self.title_icon_label.setAlignment(Qt.AlignCenter)
         self.gauge_icon_path = resource_path("gauge.svg")
+        self.app_icon_path = resource_path("app_icon.ico")
+        if self.app_icon_path.exists():
+            self.setWindowIcon(QIcon(str(self.app_icon_path)))
 
         self.title_label = QLabel(self.text["title"])
         self.title_label.setObjectName("title")
@@ -1003,16 +1006,10 @@ class Overlay(QWidget):
             self.title_icon_label.setText("◷")
 
     def apply_tray_icon(self):
-        if self.gauge_icon_path.exists():
-            self.tray.setIcon(QIcon(
-                self.load_tinted_icon_pixmap(self.gauge_icon_path, 24, self.tray_icon_color())
-            ))
+        if self.app_icon_path.exists():
+            self.tray.setIcon(QIcon(str(self.app_icon_path)))
         else:
             self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
-
-    def tray_icon_color(self):
-        window_color = QApplication.palette().window().color()
-        return "#d8d8d8" if window_color.lightness() < 128 else "#454545"
 
     def effective_theme_mode(self):
         if self.theme_mode != "auto":
@@ -1386,6 +1383,9 @@ class Overlay(QWidget):
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app_icon_path = resource_path("app_icon.ico")
+    if app_icon_path.exists():
+        app.setWindowIcon(QIcon(str(app_icon_path)))
 
     manager = OverlayManager()
     manager.start()
