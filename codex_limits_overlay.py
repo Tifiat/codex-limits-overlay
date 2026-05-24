@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QPoint
-from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -30,6 +30,9 @@ WINDOW_WIDTH = 238
 CONTENT_MARGIN_X = 10
 CONTENT_WIDTH = WINDOW_WIDTH - (CONTENT_MARGIN_X * 2)
 TITLE_ICON_SIZE = 16
+REFRESH_INTERVALS_MS = (10_000, 20_000, 30_000, 60_000, 300_000)
+SIZE_PRESETS = ("small", "medium", "large", "custom")
+THEME_MODES = ("dark", "light", "auto")
 
 
 TEXT = {
@@ -44,6 +47,22 @@ TEXT = {
         "week": "Неделя",
         "show_hide": "Показать / скрыть",
         "refresh_now": "Обновить сейчас",
+        "refresh_interval": "Интервал обновления",
+        "interval_10000": "10 секунд",
+        "interval_20000": "20 секунд",
+        "interval_30000": "30 секунд",
+        "interval_60000": "1 минута",
+        "interval_300000": "5 минут",
+        "window_size": "Размер окна",
+        "size_small": "Маленький",
+        "size_medium": "Средний",
+        "size_large": "Большой",
+        "size_custom": "Пользовательский / Растянуть вручную",
+        "size_reset": "Сбросить размер",
+        "theme": "Тема",
+        "theme_dark": "Тёмная",
+        "theme_light": "Светлая",
+        "theme_auto": "Авто",
         "restart": "Переподключить",
         "quit": "Выйти",
     },
@@ -58,6 +77,22 @@ TEXT = {
         "week": "Week",
         "show_hide": "Show / Hide",
         "refresh_now": "Refresh now",
+        "refresh_interval": "Refresh interval",
+        "interval_10000": "10 seconds",
+        "interval_20000": "20 seconds",
+        "interval_30000": "30 seconds",
+        "interval_60000": "1 minute",
+        "interval_300000": "5 minutes",
+        "window_size": "Window size",
+        "size_small": "Small",
+        "size_medium": "Medium",
+        "size_large": "Large",
+        "size_custom": "Custom / Resize manually",
+        "size_reset": "Reset size",
+        "theme": "Theme",
+        "theme_dark": "Dark",
+        "theme_light": "Light",
+        "theme_auto": "Auto",
         "restart": "Restart connection",
         "quit": "Quit",
     },
@@ -294,6 +329,9 @@ class Overlay(QWidget):
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
+        self.refresh_interval_ms = self.load_refresh_interval()
+        self.size_preset = self.load_size_preset()
+        self.theme_mode = self.load_theme_mode()
         self.auth_path = Path(r"C:\Users\user\.codex") / "auth.json"
         self.auth_mtime = self.get_auth_mtime()
 
@@ -415,7 +453,45 @@ class Overlay(QWidget):
         else:
             self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
 
+        self.context_menu = self.build_context_menu()
+        self.tray.setContextMenu(self.context_menu)
+        self.tray.activated.connect(self.on_tray_activated)
+        self.tray.show()
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(self.refresh_interval_ms)
+        self.timer.timeout.connect(self.refresh)
+
+        self.data_ready.connect(self.apply_data)
+        self.error_ready.connect(self.apply_error)
+
+        QTimer.singleShot(150, self.refresh)
+        self.timer.start()
+
+    def load_refresh_interval(self):
+        try:
+            interval = int(self.settings.value("refresh_interval_ms", POLL_INTERVAL_MS))
+        except (TypeError, ValueError):
+            interval = POLL_INTERVAL_MS
+        if interval not in REFRESH_INTERVALS_MS:
+            return POLL_INTERVAL_MS
+        return interval
+
+    def load_size_preset(self):
+        preset = str(self.settings.value("size_preset", "small"))
+        if preset not in SIZE_PRESETS:
+            return "small"
+        return preset
+
+    def load_theme_mode(self):
+        mode = str(self.settings.value("theme", "dark"))
+        if mode not in THEME_MODES:
+            return "dark"
+        return mode
+
+    def build_context_menu(self):
         menu = QMenu()
+
         show_action = QAction(self.text["show_hide"], self)
         show_action.triggered.connect(self.toggle_visible)
         refresh_action = QAction(self.text["refresh_now"], self)
@@ -427,23 +503,85 @@ class Overlay(QWidget):
 
         menu.addAction(show_action)
         menu.addAction(refresh_action)
+        menu.addMenu(self.build_refresh_interval_menu())
+        menu.addMenu(self.build_size_menu())
+        menu.addMenu(self.build_theme_menu())
         menu.addAction(restart_action)
         menu.addSeparator()
         menu.addAction(quit_action)
 
-        self.tray.setContextMenu(menu)
-        self.tray.activated.connect(self.on_tray_activated)
-        self.tray.show()
+        return menu
 
-        self.timer = QTimer(self)
-        self.timer.setInterval(POLL_INTERVAL_MS)
-        self.timer.timeout.connect(self.refresh)
+    def build_refresh_interval_menu(self):
+        menu = QMenu(self.text["refresh_interval"], self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
 
-        self.data_ready.connect(self.apply_data)
-        self.error_ready.connect(self.apply_error)
+        for interval_ms in REFRESH_INTERVALS_MS:
+            action = QAction(self.text[f"interval_{interval_ms}"], group)
+            action.setCheckable(True)
+            action.setChecked(interval_ms == self.refresh_interval_ms)
+            action.triggered.connect(lambda checked=False, ms=interval_ms: self.set_refresh_interval(ms))
+            menu.addAction(action)
 
-        QTimer.singleShot(150, self.refresh)
-        self.timer.start()
+        return menu
+
+    def build_size_menu(self):
+        menu = QMenu(self.text["window_size"], self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        for preset in SIZE_PRESETS:
+            action = QAction(self.text[f"size_{preset}"], group)
+            action.setCheckable(True)
+            action.setChecked(preset == self.size_preset)
+            action.triggered.connect(lambda checked=False, value=preset: self.set_size_preset(value))
+            menu.addAction(action)
+
+        menu.addSeparator()
+        reset_action = QAction(self.text["size_reset"], self)
+        reset_action.triggered.connect(self.reset_size)
+        menu.addAction(reset_action)
+
+        return menu
+
+    def build_theme_menu(self):
+        menu = QMenu(self.text["theme"], self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        for mode in THEME_MODES:
+            action = QAction(self.text[f"theme_{mode}"], group)
+            action.setCheckable(True)
+            action.setChecked(mode == self.theme_mode)
+            action.triggered.connect(lambda checked=False, value=mode: self.set_theme_mode(value))
+            menu.addAction(action)
+
+        return menu
+
+    def set_refresh_interval(self, interval_ms):
+        if interval_ms not in REFRESH_INTERVALS_MS:
+            return
+        self.refresh_interval_ms = interval_ms
+        self.settings.setValue("refresh_interval_ms", interval_ms)
+        self.timer.setInterval(interval_ms)
+
+    def set_size_preset(self, preset):
+        if preset not in SIZE_PRESETS:
+            return
+        self.size_preset = preset
+        self.settings.setValue("size_preset", preset)
+
+    def reset_size(self):
+        self.set_size_preset("small")
+        self.settings.remove("custom_width")
+        self.settings.remove("custom_height")
+
+    def set_theme_mode(self, mode):
+        if mode not in THEME_MODES:
+            return
+        self.theme_mode = mode
+        self.settings.setValue("theme", mode)
 
     def restore_position(self):
         x = self.settings.value("x", None)
