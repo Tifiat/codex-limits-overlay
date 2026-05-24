@@ -453,10 +453,7 @@ class Overlay(QWidget):
         self.restore_position()
 
         self.tray = QSystemTrayIcon(self)
-        if self.gauge_icon_path.exists():
-            self.tray.setIcon(QIcon(self.load_white_icon_pixmap(self.gauge_icon_path, 24)))
-        else:
-            self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        self.apply_tray_icon()
 
         self.context_menu = self.build_context_menu()
         self.tray.setContextMenu(self.context_menu)
@@ -591,6 +588,9 @@ class Overlay(QWidget):
             return
         self.theme_mode = mode
         self.settings.setValue("theme", mode)
+        self.apply_style()
+        self.apply_title_icon()
+        self.apply_tray_icon()
 
     def restore_position(self):
         x = self.settings.value("x", None)
@@ -652,40 +652,41 @@ class Overlay(QWidget):
 
     def apply_style(self):
         preset = self.preset()
+        colors = self.theme_colors()
         progress_height = preset["progress_height"]
         progress_radius = max(2, progress_height // 2)
         self.setStyleSheet(f"""
             QWidget#root {{
-                background: rgba(20, 20, 22, 235);
-                border: 1px solid rgba(255, 255, 255, 35);
+                background: {colors["background"]};
+                border: 1px solid {colors["border"]};
                 border-radius: 16px;
             }}
             QLabel {{
-                color: #eeeeee;
+                color: {colors["text"]};
                 font-family: Segoe UI, Arial;
                 font-size: {preset["limit_font"]}px;
             }}
             QLabel#title {{
-                color: #ffffff;
+                color: {colors["title"]};
                 font-weight: 700;
                 font-size: {preset["title_font"]}px;
             }}
             QLabel#muted {{
-                color: #b2b2b2;
+                color: {colors["muted"]};
                 font-size: {preset["muted_font"]}px;
             }}
             QLabel#account {{
-                color: #e2e2e2;
+                color: {colors["account"]};
                 font-size: {preset["account_font"]}px;
                 font-weight: 650;
             }}
             QLabel#bucketName, QLabel#bucketPercent, QLabel#bucketReset {{
-                color: #ffffff;
+                color: {colors["title"]};
                 font-size: {preset["limit_font"]}px;
                 font-weight: 700;
             }}
             QLabel#titleIcon {{
-                color: #eeeeee;
+                color: {colors["icon"]};
                 font-size: {preset["icon_size"]}px;
             }}
             QLabel#bucketPercent {{
@@ -699,12 +700,12 @@ class Overlay(QWidget):
                 max-height: {progress_height}px;
                 border: none;
                 border-radius: {progress_radius}px;
-                background: rgba(255, 255, 255, 35);
+                background: {colors["progress_background"]};
                 text-align: center;
             }}
             QProgressBar::chunk {{
                 border-radius: {progress_radius}px;
-                background: #eeeeee;
+                background: {colors["progress_chunk"]};
             }}
         """)
 
@@ -712,9 +713,52 @@ class Overlay(QWidget):
         size = self.preset()["icon_size"]
         self.title_icon_label.setFixedSize(size, size)
         if self.gauge_icon_path.exists():
-            self.title_icon_label.setPixmap(self.load_white_icon_pixmap(self.gauge_icon_path, size))
+            self.title_icon_label.setPixmap(
+                self.load_tinted_icon_pixmap(self.gauge_icon_path, size, self.theme_colors()["icon"])
+            )
         else:
             self.title_icon_label.setText("◷")
+
+    def apply_tray_icon(self):
+        if self.gauge_icon_path.exists():
+            self.tray.setIcon(QIcon(
+                self.load_tinted_icon_pixmap(self.gauge_icon_path, 24, self.theme_colors()["icon"])
+            ))
+        else:
+            self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+
+    def effective_theme_mode(self):
+        if self.theme_mode != "auto":
+            return self.theme_mode
+
+        window_color = QApplication.palette().window().color()
+        return "light" if window_color.lightness() >= 128 else "dark"
+
+    def theme_colors(self):
+        if self.effective_theme_mode() == "light":
+            return {
+                "background": "rgba(245, 245, 245, 238)",
+                "border": "rgba(0, 0, 0, 40)",
+                "text": "#111111",
+                "title": "#111111",
+                "account": "#222222",
+                "muted": "#666666",
+                "progress_background": "rgba(0, 0, 0, 35)",
+                "progress_chunk": "#222222",
+                "icon": "#222222",
+            }
+
+        return {
+            "background": "rgba(20, 20, 22, 235)",
+            "border": "rgba(255, 255, 255, 35)",
+            "text": "#eeeeee",
+            "title": "#ffffff",
+            "account": "#e2e2e2",
+            "muted": "#b2b2b2",
+            "progress_background": "rgba(255, 255, 255, 35)",
+            "progress_chunk": "#eeeeee",
+            "icon": "#eeeeee",
+        }
 
     def set_account_text(self, email, plan):
         self.account_text_full = f"{email}" + (f" · {plan}" if plan else "")
@@ -730,7 +774,7 @@ class Overlay(QWidget):
         self.account_label.setText(text)
         self.account_label.setToolTip(self.account_text_full)
 
-    def load_white_icon_pixmap(self, path, size):
+    def load_tinted_icon_pixmap(self, path, size, color):
         source = QIcon(str(path)).pixmap(size * 4, size * 4)
         if source.isNull():
             return QPixmap()
@@ -741,7 +785,7 @@ class Overlay(QWidget):
         painter = QPainter(white)
         painter.drawPixmap(0, 0, source)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        painter.fillRect(white.rect(), QColor("#eeeeee"))
+        painter.fillRect(white.rect(), QColor(color))
         painter.end()
 
         image = white.toImage()
