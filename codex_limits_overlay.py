@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QPoint
+from PySide6.QtCore import Qt, QTimer, Signal, QSettings
 from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,11 +27,15 @@ from PySide6.QtWidgets import (
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 300_000
 AUTH_CHECK_INTERVAL_MS = 20_000
-WINDOW_WIDTH = 238
+DEFAULT_WINDOW_WIDTH = 220
 CONTENT_MARGIN_X = 10
-CONTENT_WIDTH = WINDOW_WIDTH - (CONTENT_MARGIN_X * 2)
 TITLE_ICON_SIZE = 16
-SIZE_PRESETS = ("small", "medium", "large", "custom")
+SIZE_PRESETS = ("small", "medium", "large")
+SIZE_PRESET_WIDTHS = {
+    "small": 220,
+    "medium": 250,
+    "large": 300,
+}
 THEME_MODES = ("dark", "light", "auto")
 
 
@@ -51,8 +55,6 @@ TEXT = {
         "size_small": "Маленький",
         "size_medium": "Средний",
         "size_large": "Большой",
-        "size_custom": "Пользовательский / Растянуть вручную",
-        "size_reset": "Сбросить размер",
         "theme": "Тема",
         "theme_dark": "Тёмная",
         "theme_light": "Светлая",
@@ -75,8 +77,6 @@ TEXT = {
         "size_small": "Small",
         "size_medium": "Medium",
         "size_large": "Large",
-        "size_custom": "Custom / Resize manually",
-        "size_reset": "Reset size",
         "theme": "Theme",
         "theme_dark": "Dark",
         "theme_light": "Light",
@@ -328,6 +328,7 @@ class Overlay(QWidget):
         self.client = None
         self.refreshing = False
         self.drag_pos = None
+        self.last_data = None
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
@@ -439,9 +440,8 @@ class Overlay(QWidget):
             }
         """)
 
-        self.setFixedWidth(WINDOW_WIDTH)
-        self.root.setFixedWidth(WINDOW_WIDTH)
-        self.resize(WINDOW_WIDTH, 120)
+        self.apply_window_width()
+        self.resize(self.window_width(), 120)
         self.restore_position()
 
         self.tray = QSystemTrayIcon(self)
@@ -517,11 +517,6 @@ class Overlay(QWidget):
             action.triggered.connect(lambda checked=False, value=preset: self.set_size_preset(value))
             menu.addAction(action)
 
-        menu.addSeparator()
-        reset_action = QAction(self.text["size_reset"], self)
-        reset_action.triggered.connect(self.reset_size)
-        menu.addAction(reset_action)
-
         return menu
 
     def build_theme_menu(self):
@@ -543,11 +538,9 @@ class Overlay(QWidget):
             return
         self.size_preset = preset
         self.settings.setValue("size_preset", preset)
-
-    def reset_size(self):
-        self.set_size_preset("small")
-        self.settings.remove("custom_width")
-        self.settings.remove("custom_height")
+        self.apply_window_width()
+        if self.last_data:
+            self.apply_data(self.last_data)
 
     def set_theme_mode(self, mode):
         if mode not in THEME_MODES:
@@ -567,6 +560,17 @@ class Overlay(QWidget):
     def save_position(self):
         self.settings.setValue("x", self.x())
         self.settings.setValue("y", self.y())
+
+    def window_width(self):
+        return SIZE_PRESET_WIDTHS.get(self.size_preset, DEFAULT_WINDOW_WIDTH)
+
+    def content_width(self):
+        return max(160, self.width() - CONTENT_MARGIN_X * 2)
+
+    def apply_window_width(self):
+        width = self.window_width()
+        self.setFixedWidth(width)
+        self.root.setFixedWidth(width)
 
     def load_white_icon_pixmap(self, path, size):
         source = QIcon(str(path)).pixmap(size * 4, size * 4)
@@ -692,7 +696,7 @@ class Overlay(QWidget):
         box_layout.setSpacing(3)
 
         row_widget = QWidget()
-        row_widget.setFixedWidth(CONTENT_WIDTH)
+        row_widget.setFixedWidth(self.content_width())
 
         row = QGridLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
@@ -716,7 +720,7 @@ class Overlay(QWidget):
 
         bar = QProgressBar()
         bar.setFixedHeight(4)
-        bar.setFixedWidth(CONTENT_WIDTH)
+        bar.setFixedWidth(self.content_width())
         bar.setRange(0, 100)
         bar.setValue(left_percent)
         bar.setTextVisible(False)
@@ -786,16 +790,20 @@ class Overlay(QWidget):
 
     def apply_data(self, data):
         self.refreshing = False
+        self.last_data = data
 
         account_obj = (data.get("account") or {}).get("account") or {}
         email = account_obj.get("email") or self.text["unknown_account"]
         plan = account_obj.get("planType")
         self.account_label.setText(f"{email}" + (f" · {plan}" if plan else ""))
 
+        self.apply_window_width()
         limits = data.get("limits") or {}
         self.apply_limits(limits)
 
     def apply_limits_update(self, limits):
+        if self.last_data:
+            self.last_data = {**self.last_data, "limits": limits}
         self.apply_limits(limits)
 
     def apply_limits(self, limits):
@@ -809,8 +817,7 @@ class Overlay(QWidget):
             label = QLabel(self.text["no_limits"])
             self.buckets.addWidget(label)
 
-        self.setFixedWidth(WINDOW_WIDTH)
-        self.root.setFixedWidth(WINDOW_WIDTH)
+        self.apply_window_width()
         self.adjustSize()
         self.save_position()
 
@@ -821,8 +828,7 @@ class Overlay(QWidget):
         msg = QLabel(text[:260])
         msg.setWordWrap(True)
         self.buckets.addWidget(msg)
-        self.setFixedWidth(WINDOW_WIDTH)
-        self.root.setFixedWidth(WINDOW_WIDTH)
+        self.apply_window_width()
         self.adjustSize()
 
     def restart_connection(self):
