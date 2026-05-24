@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
 
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 20_000
-WINDOW_WIDTH = 236
+WINDOW_WIDTH = 216
 TITLE_ICON_SIZE = 16
+PROGRESS_WIDTH = 198
 
 
 TEXT = {
@@ -333,7 +334,7 @@ class Overlay(QWidget):
         header.setSpacing(5)
         header.addWidget(self.title_icon_label)
         header.addWidget(self.title_label)
-        header.addSpacing(12)
+        header.addSpacing(6)
         header.addWidget(self.status_label)
         header.addStretch(1)
 
@@ -356,7 +357,7 @@ class Overlay(QWidget):
             }
             QLabel {
                 color: #eeeeee;
-                font-family: Cascadia Mono, Consolas, Segoe UI;
+                font-family: Segoe UI, Arial;
                 font-size: 13px;
             }
             QLabel#title {
@@ -366,7 +367,7 @@ class Overlay(QWidget):
             }
             QLabel#muted {
                 color: #b2b2b2;
-                font-size: 10px;
+                font-size: 11px;
             }
             QLabel#account {
                 color: #e2e2e2;
@@ -561,7 +562,10 @@ class Overlay(QWidget):
         box_layout.setContentsMargins(0, 0, 0, 0)
         box_layout.setSpacing(3)
 
-        row = QGridLayout()
+        row_widget = QWidget()
+        row_widget.setFixedWidth(PROGRESS_WIDTH)
+
+        row = QGridLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
         row.setHorizontalSpacing(8)
         row.setColumnStretch(0, 1)
@@ -583,11 +587,12 @@ class Overlay(QWidget):
 
         bar = QProgressBar()
         bar.setFixedHeight(4)
+        bar.setFixedWidth(PROGRESS_WIDTH)
         bar.setRange(0, 100)
         bar.setValue(left_percent)
         bar.setTextVisible(False)
 
-        box_layout.addLayout(row)
+        box_layout.addWidget(row_widget)
         box_layout.addWidget(bar)
         return box
 
