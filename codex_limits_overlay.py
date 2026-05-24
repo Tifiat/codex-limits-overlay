@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 20_000
-WINDOW_WIDTH = 278
+WINDOW_WIDTH = 236
 TITLE_ICON_SIZE = 16
 
 
@@ -389,7 +389,8 @@ class Overlay(QWidget):
                 qproperty-alignment: AlignRight;
             }
             QProgressBar {
-                height: 5px;
+                height: 4px;
+                max-height: 4px;
                 border: none;
                 border-radius: 2px;
                 background: rgba(255, 255, 255, 35);
@@ -581,6 +582,7 @@ class Overlay(QWidget):
         row.addWidget(reset, 0, 2, alignment=Qt.AlignRight)
 
         bar = QProgressBar()
+        bar.setFixedHeight(4)
         bar.setRange(0, 100)
         bar.setValue(left_percent)
         bar.setTextVisible(False)
