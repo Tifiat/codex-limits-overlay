@@ -11,4 +11,6 @@ $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
 & $Python -m pip install --upgrade pip
 & $Python -m pip install -r requirements-dev.txt
-& $Python -m PyInstaller --noconfirm CodexLimitsOverlay.spec
+
+Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+& $Python -m PyInstaller --clean --noconfirm CodexLimitsOverlay.spec

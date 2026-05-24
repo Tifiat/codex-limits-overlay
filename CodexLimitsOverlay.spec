@@ -1,5 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+project_dir = Path(SPECPATH).resolve()
+app_icon = str(project_dir / "app_icon.ico")
+
 
 a = Analysis(
     ["codex_limits_overlay.py"],
@@ -27,7 +33,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon="app_icon.ico",
+    icon=app_icon,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
