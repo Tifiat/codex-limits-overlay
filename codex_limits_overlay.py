@@ -418,8 +418,15 @@ class OverlayManager(QObject):
         self.error_ready.connect(self.apply_error_to_windows)
 
     def start(self):
-        window = self.create_window()
-        window.show()
+        positions = self.load_window_positions()
+        if positions:
+            for position in positions:
+                window = self.create_window(position=position)
+                window.show()
+        else:
+            window = self.create_window()
+            window.show()
+
         QTimer.singleShot(150, self.refresh)
         self.timer.start()
         self.auth_timer.start()
@@ -445,11 +452,45 @@ class OverlayManager(QObject):
             return "dark"
         return mode
 
-    def create_window(self, source_window=None):
+    def load_window_positions(self):
+        try:
+            count = int(self.settings.value("window_count", 0))
+        except (TypeError, ValueError):
+            count = 0
+        if count <= 0:
+            return []
+
+        positions = []
+        for index in range(count):
+            x = self.settings.value(f"window_{index}_x", None)
+            y = self.settings.value(f"window_{index}_y", None)
+            if x is None or y is None:
+                continue
+            try:
+                positions.append((int(x), int(y)))
+            except (TypeError, ValueError):
+                continue
+
+        return positions
+
+    def save_window_positions(self):
+        visible_windows = list(self.windows)
+        self.settings.setValue("window_count", len(visible_windows))
+
+        for index, window in enumerate(visible_windows):
+            self.settings.setValue(f"window_{index}_x", window.x())
+            self.settings.setValue(f"window_{index}_y", window.y())
+            if index == 0:
+                self.settings.setValue("x", window.x())
+                self.settings.setValue("y", window.y())
+
+    def create_window(self, source_window=None, position=None):
         window = Overlay(self, is_primary=not self.windows)
         self.windows.append(window)
 
-        if source_window:
+        if position:
+            window.move(*position)
+        elif source_window:
             window.move(source_window.x() + 24, source_window.y() + 24)
 
         if self.last_data:
@@ -602,10 +643,13 @@ class OverlayManager(QObject):
             window.apply_error(text)
 
     def quit_app(self):
-        for window in self.windows:
-            window.save_position()
+        self.save_window_positions()
         if self.client:
             self.client.close()
+        for window in list(self.windows):
+            window.force_close = True
+            window.tray.hide()
+            window.close()
         QApplication.quit()
 
 
