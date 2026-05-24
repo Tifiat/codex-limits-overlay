@@ -35,6 +35,26 @@ pip install -r requirements.txt
 python codex_limits_overlay.py
 ```
 
+## Build Windows exe
+
+```powershell
+.\scripts\build_exe.ps1
+```
+
+The exe will be created at:
+
+```text
+dist/CodexLimitsOverlay/CodexLimitsOverlay.exe
+```
+
+Codex CLI must be installed separately:
+
+```powershell
+npm install -g @openai/codex
+```
+
+The exe does not include Node.js or Codex CLI.
+
 ## Important Notes
 
 - The app does not store OpenAI tokens.

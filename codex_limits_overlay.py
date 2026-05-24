@@ -165,6 +165,13 @@ MONTHS_EN = [
 ]
 
 
+def resource_path(name):
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return Path(base) / name
+    return Path(__file__).resolve().parent / name
+
+
 def detect_russian_locale():
     candidates = []
     for key in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
@@ -688,7 +695,7 @@ class Overlay(QWidget):
         self.title_icon_label = QLabel()
         self.title_icon_label.setObjectName("titleIcon")
         self.title_icon_label.setAlignment(Qt.AlignCenter)
-        self.gauge_icon_path = Path(__file__).with_name("gauge.svg")
+        self.gauge_icon_path = resource_path("gauge.svg")
 
         self.title_label = QLabel(self.text["title"])
         self.title_label.setObjectName("title")
