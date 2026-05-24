@@ -311,6 +311,7 @@ class Overlay(QWidget):
         self.title_icon_label = QLabel()
         self.title_icon_label.setObjectName("titleIcon")
         self.title_icon_label.setFixedSize(TITLE_ICON_SIZE, TITLE_ICON_SIZE)
+        self.title_icon_label.setAlignment(Qt.AlignCenter)
         gauge_icon_path = Path(__file__).with_name("gauge.svg")
         if gauge_icon_path.exists():
             self.title_icon_label.setPixmap(self.load_white_icon_pixmap(gauge_icon_path, TITLE_ICON_SIZE))
