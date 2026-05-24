@@ -27,14 +27,50 @@ from PySide6.QtWidgets import (
 APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 300_000
 AUTH_CHECK_INTERVAL_MS = 20_000
-DEFAULT_WINDOW_WIDTH = 220
-CONTENT_MARGIN_X = 10
-TITLE_ICON_SIZE = 16
-SIZE_PRESETS = ("small", "medium", "large")
-SIZE_PRESET_WIDTHS = {
-    "small": 220,
-    "medium": 250,
-    "large": 300,
+DEFAULT_SIZE_PRESET = "small"
+SIZE_PRESETS = {
+    "small": {
+        "width": 220,
+        "margin_x": 8,
+        "margin_top": 7,
+        "margin_bottom": 8,
+        "title_font": 12,
+        "account_font": 11,
+        "limit_font": 11,
+        "muted_font": 10,
+        "icon_size": 13,
+        "progress_height": 4,
+        "bucket_spacing": 6,
+        "row_spacing": 2,
+    },
+    "medium": {
+        "width": 250,
+        "margin_x": 10,
+        "margin_top": 8,
+        "margin_bottom": 9,
+        "title_font": 13,
+        "account_font": 12,
+        "limit_font": 12,
+        "muted_font": 11,
+        "icon_size": 14,
+        "progress_height": 5,
+        "bucket_spacing": 7,
+        "row_spacing": 3,
+    },
+    "large": {
+        "width": 300,
+        "margin_x": 12,
+        "margin_top": 10,
+        "margin_bottom": 11,
+        "title_font": 14,
+        "account_font": 13,
+        "limit_font": 13,
+        "muted_font": 12,
+        "icon_size": 16,
+        "progress_height": 6,
+        "bucket_spacing": 9,
+        "row_spacing": 4,
+    },
 }
 THEME_MODES = ("dark", "light", "auto")
 
@@ -329,6 +365,7 @@ class Overlay(QWidget):
         self.refreshing = False
         self.drag_pos = None
         self.last_data = None
+        self.account_text_full = ""
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
@@ -350,13 +387,8 @@ class Overlay(QWidget):
 
         self.title_icon_label = QLabel()
         self.title_icon_label.setObjectName("titleIcon")
-        self.title_icon_label.setFixedSize(TITLE_ICON_SIZE, TITLE_ICON_SIZE)
         self.title_icon_label.setAlignment(Qt.AlignCenter)
-        gauge_icon_path = Path(__file__).with_name("gauge.svg")
-        if gauge_icon_path.exists():
-            self.title_icon_label.setPixmap(self.load_white_icon_pixmap(gauge_icon_path, TITLE_ICON_SIZE))
-        else:
-            self.title_icon_label.setText("◷")
+        self.gauge_icon_path = Path(__file__).with_name("gauge.svg")
 
         self.title_label = QLabel(self.text["title"])
         self.title_label.setObjectName("title")
@@ -365,88 +397,33 @@ class Overlay(QWidget):
         self.account_label.setObjectName("account")
 
         self.buckets = QVBoxLayout()
-        self.buckets.setSpacing(8)
         self.buckets.setContentsMargins(0, 6, 0, 0)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(5)
-        header.addWidget(self.title_icon_label, 0, Qt.AlignVCenter)
-        header.addWidget(self.title_label, 0, Qt.AlignVCenter)
-        header.addStretch(1)
+        self.header = QHBoxLayout()
+        self.header.setContentsMargins(0, 0, 0, 0)
+        self.header.addWidget(self.title_icon_label, 0, Qt.AlignVCenter)
+        self.header.addWidget(self.title_label, 0, Qt.AlignVCenter)
+        self.header.addStretch(1)
 
-        layout = QVBoxLayout(self.root)
-        layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(5)
-        layout.addLayout(header)
-        layout.addWidget(self.account_label)
-        layout.addLayout(self.buckets)
+        self.root_layout = QVBoxLayout(self.root)
+        self.root_layout.addLayout(self.header)
+        self.root_layout.addWidget(self.account_label)
+        self.root_layout.addLayout(self.buckets)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.root)
 
-        self.setStyleSheet("""
-            QWidget#root {
-                background: rgba(20, 20, 22, 235);
-                border: 1px solid rgba(255, 255, 255, 35);
-                border-radius: 16px;
-            }
-            QLabel {
-                color: #eeeeee;
-                font-family: Segoe UI, Arial;
-                font-size: 13px;
-            }
-            QLabel#title {
-                color: #ffffff;
-                font-weight: 700;
-                font-size: 13px;
-            }
-            QLabel#muted {
-                color: #b2b2b2;
-                font-size: 11px;
-            }
-            QLabel#account {
-                color: #e2e2e2;
-                font-size: 12px;
-                font-weight: 650;
-            }
-            QLabel#bucketName, QLabel#bucketPercent, QLabel#bucketReset {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 700;
-            }
-            QLabel#titleIcon {
-                color: #eeeeee;
-                font-size: 13px;
-            }
-            QLabel#bucketPercent {
-                qproperty-alignment: AlignCenter;
-            }
-            QLabel#bucketReset {
-                qproperty-alignment: AlignRight;
-            }
-            QProgressBar {
-                height: 4px;
-                max-height: 4px;
-                border: none;
-                border-radius: 2px;
-                background: rgba(255, 255, 255, 35);
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                border-radius: 2px;
-                background: #eeeeee;
-            }
-        """)
-
+        self.apply_style()
+        self.apply_layout_metrics()
+        self.apply_title_icon()
         self.apply_window_width()
         self.resize(self.window_width(), 120)
         self.restore_position()
 
         self.tray = QSystemTrayIcon(self)
-        if gauge_icon_path.exists():
-            self.tray.setIcon(QIcon(self.load_white_icon_pixmap(gauge_icon_path, 24)))
+        if self.gauge_icon_path.exists():
+            self.tray.setIcon(QIcon(self.load_white_icon_pixmap(self.gauge_icon_path, 24)))
         else:
             self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
 
@@ -472,9 +449,9 @@ class Overlay(QWidget):
         self.auth_timer.start()
 
     def load_size_preset(self):
-        preset = str(self.settings.value("size_preset", "small"))
+        preset = str(self.settings.value("size_preset", DEFAULT_SIZE_PRESET))
         if preset not in SIZE_PRESETS:
-            return "small"
+            return DEFAULT_SIZE_PRESET
         return preset
 
     def load_theme_mode(self):
@@ -539,6 +516,10 @@ class Overlay(QWidget):
         self.size_preset = preset
         self.settings.setValue("size_preset", preset)
         self.apply_window_width()
+        self.apply_style()
+        self.apply_layout_metrics()
+        self.apply_title_icon()
+        self.apply_account_elide()
         if self.last_data:
             self.apply_data(self.last_data)
 
@@ -561,16 +542,115 @@ class Overlay(QWidget):
         self.settings.setValue("x", self.x())
         self.settings.setValue("y", self.y())
 
+    def preset(self):
+        return SIZE_PRESETS.get(self.size_preset, SIZE_PRESETS[DEFAULT_SIZE_PRESET])
+
     def window_width(self):
-        return SIZE_PRESET_WIDTHS.get(self.size_preset, DEFAULT_WINDOW_WIDTH)
+        return self.preset()["width"]
 
     def content_width(self):
-        return max(160, self.width() - CONTENT_MARGIN_X * 2)
+        preset = self.preset()
+        return max(160, preset["width"] - preset["margin_x"] * 2)
 
     def apply_window_width(self):
         width = self.window_width()
         self.setFixedWidth(width)
         self.root.setFixedWidth(width)
+
+    def apply_layout_metrics(self):
+        preset = self.preset()
+        margin_x = preset["margin_x"]
+        self.root_layout.setContentsMargins(
+            margin_x,
+            preset["margin_top"],
+            margin_x,
+            preset["margin_bottom"],
+        )
+        self.root_layout.setSpacing(max(3, preset["row_spacing"] + 2))
+        self.header.setSpacing(max(4, preset["row_spacing"] + 3))
+        self.buckets.setSpacing(preset["bucket_spacing"])
+        self.buckets.setContentsMargins(0, preset["bucket_spacing"], 0, 0)
+        self.account_label.setFixedWidth(self.content_width())
+
+    def apply_style(self):
+        preset = self.preset()
+        progress_height = preset["progress_height"]
+        progress_radius = max(2, progress_height // 2)
+        self.setStyleSheet(f"""
+            QWidget#root {{
+                background: rgba(20, 20, 22, 235);
+                border: 1px solid rgba(255, 255, 255, 35);
+                border-radius: 16px;
+            }}
+            QLabel {{
+                color: #eeeeee;
+                font-family: Segoe UI, Arial;
+                font-size: {preset["limit_font"]}px;
+            }}
+            QLabel#title {{
+                color: #ffffff;
+                font-weight: 700;
+                font-size: {preset["title_font"]}px;
+            }}
+            QLabel#muted {{
+                color: #b2b2b2;
+                font-size: {preset["muted_font"]}px;
+            }}
+            QLabel#account {{
+                color: #e2e2e2;
+                font-size: {preset["account_font"]}px;
+                font-weight: 650;
+            }}
+            QLabel#bucketName, QLabel#bucketPercent, QLabel#bucketReset {{
+                color: #ffffff;
+                font-size: {preset["limit_font"]}px;
+                font-weight: 700;
+            }}
+            QLabel#titleIcon {{
+                color: #eeeeee;
+                font-size: {preset["icon_size"]}px;
+            }}
+            QLabel#bucketPercent {{
+                qproperty-alignment: AlignCenter;
+            }}
+            QLabel#bucketReset {{
+                qproperty-alignment: AlignRight;
+            }}
+            QProgressBar {{
+                height: {progress_height}px;
+                max-height: {progress_height}px;
+                border: none;
+                border-radius: {progress_radius}px;
+                background: rgba(255, 255, 255, 35);
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                border-radius: {progress_radius}px;
+                background: #eeeeee;
+            }}
+        """)
+
+    def apply_title_icon(self):
+        size = self.preset()["icon_size"]
+        self.title_icon_label.setFixedSize(size, size)
+        if self.gauge_icon_path.exists():
+            self.title_icon_label.setPixmap(self.load_white_icon_pixmap(self.gauge_icon_path, size))
+        else:
+            self.title_icon_label.setText("◷")
+
+    def set_account_text(self, email, plan):
+        self.account_text_full = f"{email}" + (f" · {plan}" if plan else "")
+        self.apply_account_elide()
+
+    def apply_account_elide(self):
+        if not self.account_text_full:
+            self.account_label.setText("")
+            return
+
+        metrics = self.account_label.fontMetrics()
+        text = metrics.elidedText(self.account_text_full, Qt.ElideRight, self.content_width())
+        self.account_label.setText(text)
+        self.account_label.setToolTip(self.account_text_full)
 
     def load_white_icon_pixmap(self, path, size):
         source = QIcon(str(path)).pixmap(size * 4, size * 4)
@@ -693,7 +773,7 @@ class Overlay(QWidget):
         box = QWidget()
         box_layout = QVBoxLayout(box)
         box_layout.setContentsMargins(0, 0, 0, 0)
-        box_layout.setSpacing(3)
+        box_layout.setSpacing(self.preset()["row_spacing"])
 
         row_widget = QWidget()
         row_widget.setFixedWidth(self.content_width())
@@ -719,7 +799,7 @@ class Overlay(QWidget):
         row.addWidget(reset, 0, 2, alignment=Qt.AlignRight)
 
         bar = QProgressBar()
-        bar.setFixedHeight(4)
+        bar.setFixedHeight(self.preset()["progress_height"])
         bar.setFixedWidth(self.content_width())
         bar.setRange(0, 100)
         bar.setValue(left_percent)
@@ -795,9 +875,12 @@ class Overlay(QWidget):
         account_obj = (data.get("account") or {}).get("account") or {}
         email = account_obj.get("email") or self.text["unknown_account"]
         plan = account_obj.get("planType")
-        self.account_label.setText(f"{email}" + (f" · {plan}" if plan else ""))
 
         self.apply_window_width()
+        self.apply_style()
+        self.apply_layout_metrics()
+        self.apply_title_icon()
+        self.set_account_text(email, plan)
         limits = data.get("limits") or {}
         self.apply_limits(limits)
 
@@ -825,6 +908,7 @@ class Overlay(QWidget):
         self.refreshing = False
         self.clear_buckets()
         self.account_label.setText(self.text["error"])
+        self.account_text_full = ""
         msg = QLabel(text[:260])
         msg.setWordWrap(True)
         self.buckets.addWidget(msg)
