@@ -732,27 +732,27 @@ class Overlay(QWidget):
     def theme_colors(self):
         if self.effective_theme_mode() == "light":
             return {
-                "background": "rgba(245, 245, 245, 238)",
-                "border": "rgba(0, 0, 0, 40)",
-                "text": "#111111",
-                "title": "#111111",
-                "account": "#222222",
-                "muted": "#666666",
-                "progress_background": "rgba(0, 0, 0, 35)",
-                "progress_chunk": "#222222",
-                "icon": "#222222",
+                "background": "rgba(245, 245, 245, 218)",
+                "border": "rgba(0, 0, 0, 32)",
+                "text": "#303030",
+                "title": "#242424",
+                "account": "#363636",
+                "muted": "#777777",
+                "progress_background": "rgba(0, 0, 0, 28)",
+                "progress_chunk": "#454545",
+                "icon": "#454545",
             }
 
         return {
-            "background": "rgba(20, 20, 22, 235)",
-            "border": "rgba(255, 255, 255, 35)",
-            "text": "#eeeeee",
-            "title": "#ffffff",
-            "account": "#e2e2e2",
-            "muted": "#b2b2b2",
-            "progress_background": "rgba(255, 255, 255, 35)",
-            "progress_chunk": "#eeeeee",
-            "icon": "#eeeeee",
+            "background": "rgba(20, 20, 22, 218)",
+            "border": "rgba(255, 255, 255, 28)",
+            "text": "#d8d8d8",
+            "title": "#e8e8e8",
+            "account": "#d2d2d2",
+            "muted": "#a2a2a2",
+            "progress_background": "rgba(255, 255, 255, 28)",
+            "progress_chunk": "#d6d6d6",
+            "icon": "#d8d8d8",
         }
 
     def set_account_text(self, email, plan):
