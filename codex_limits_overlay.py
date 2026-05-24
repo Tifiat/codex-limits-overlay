@@ -28,6 +28,7 @@ APP_NAME = "Codex Limits Overlay"
 POLL_INTERVAL_MS = 20_000
 AUTH_CHECK_INTERVAL_MS = 20_000
 REFRESH_INTERVALS_MS = (10_000, 20_000, 30_000, 60_000, 300_000)
+WINDOW_SAFETY_GAP = 6
 DEFAULT_SIZE_PRESET = "small"
 SIZE_PRESETS = {
     "small": {
@@ -592,14 +593,21 @@ class Overlay(QWidget):
         return SIZE_PRESETS.get(self.size_preset, SIZE_PRESETS[DEFAULT_SIZE_PRESET])
 
     def window_width(self):
-        return self.preset()["width"]
+        preset = self.preset()
+        if not self.account_text_full:
+            return preset["width"]
+        return self.limit_block_width() + preset["margin_x"] * 2 + WINDOW_SAFETY_GAP
 
     def content_width(self):
+        preset = self.preset()
+        return max(160, self.width() - preset["margin_x"] * 2)
+
+    def preset_content_width(self):
         preset = self.preset()
         return max(160, preset["width"] - preset["margin_x"] * 2)
 
     def limit_block_width(self):
-        max_width = self.content_width()
+        max_width = self.preset_content_width()
         if not self.account_text_full:
             return max_width
 
@@ -955,6 +963,8 @@ class Overlay(QWidget):
             self.buckets.addWidget(label)
 
         self.apply_window_width()
+        self.apply_layout_metrics()
+        self.apply_account_elide()
         self.adjustSize()
         self.save_position()
 
