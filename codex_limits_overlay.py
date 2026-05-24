@@ -897,10 +897,14 @@ class Overlay(QWidget):
     def apply_tray_icon(self):
         if self.gauge_icon_path.exists():
             self.tray.setIcon(QIcon(
-                self.load_tinted_icon_pixmap(self.gauge_icon_path, 24, self.theme_colors()["icon"])
+                self.load_tinted_icon_pixmap(self.gauge_icon_path, 24, self.tray_icon_color())
             ))
         else:
             self.tray.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+
+    def tray_icon_color(self):
+        window_color = QApplication.palette().window().color()
+        return "#d8d8d8" if window_color.lightness() < 128 else "#454545"
 
     def effective_theme_mode(self):
         if self.theme_mode != "auto":
