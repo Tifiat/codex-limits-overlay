@@ -25,12 +25,12 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Codex Limits Overlay"
-POLL_INTERVAL_MS = 20_000
+POLL_INTERVAL_MS = 300_000
+AUTH_CHECK_INTERVAL_MS = 20_000
 WINDOW_WIDTH = 238
 CONTENT_MARGIN_X = 10
 CONTENT_WIDTH = WINDOW_WIDTH - (CONTENT_MARGIN_X * 2)
 TITLE_ICON_SIZE = 16
-REFRESH_INTERVALS_MS = (10_000, 20_000, 30_000, 60_000, 300_000)
 SIZE_PRESETS = ("small", "medium", "large", "custom")
 THEME_MODES = ("dark", "light", "auto")
 
@@ -47,12 +47,6 @@ TEXT = {
         "week": "Неделя",
         "show_hide": "Показать / скрыть",
         "refresh_now": "Обновить сейчас",
-        "refresh_interval": "Интервал обновления",
-        "interval_10000": "10 секунд",
-        "interval_20000": "20 секунд",
-        "interval_30000": "30 секунд",
-        "interval_60000": "1 минута",
-        "interval_300000": "5 минут",
         "window_size": "Размер окна",
         "size_small": "Маленький",
         "size_medium": "Средний",
@@ -77,12 +71,6 @@ TEXT = {
         "week": "Week",
         "show_hide": "Show / Hide",
         "refresh_now": "Refresh now",
-        "refresh_interval": "Refresh interval",
-        "interval_10000": "10 seconds",
-        "interval_20000": "20 seconds",
-        "interval_30000": "30 seconds",
-        "interval_60000": "1 minute",
-        "interval_300000": "5 minutes",
         "window_size": "Window size",
         "size_small": "Small",
         "size_medium": "Medium",
@@ -142,7 +130,7 @@ class CodexRpcError(RuntimeError):
 
 
 class CodexAppServerClient:
-    def __init__(self):
+    def __init__(self, notification_callback=None):
         self.proc = None
         self.next_id = 1
         self.pending = {}
@@ -150,6 +138,7 @@ class CodexAppServerClient:
         self.write_lock = threading.Lock()
         self.stderr_tail = []
         self.alive = False
+        self.notification_callback = notification_callback
         self._start()
         self._initialize()
 
@@ -245,8 +234,20 @@ class CodexAppServerClient:
                         if slot:
                             slot["msg"] = msg
                             slot["event"].set()
+                else:
+                    self._handle_notification(msg)
         finally:
             self.alive = False
+
+    def _handle_notification(self, msg):
+        if msg.get("method") != "account/rateLimits/updated":
+            return
+        if not self.notification_callback:
+            return
+        try:
+            self.notification_callback(msg)
+        except Exception:
+            pass
 
     def _stderr_reader(self):
         try:
@@ -318,6 +319,7 @@ class CodexAppServerClient:
 
 class Overlay(QWidget):
     data_ready = Signal(dict)
+    limits_ready = Signal(dict)
     error_ready = Signal(str)
 
     def __init__(self):
@@ -329,7 +331,6 @@ class Overlay(QWidget):
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
-        self.refresh_interval_ms = self.load_refresh_interval()
         self.size_preset = self.load_size_preset()
         self.theme_mode = self.load_theme_mode()
         self.auth_path = Path(r"C:\Users\user\.codex") / "auth.json"
@@ -359,9 +360,6 @@ class Overlay(QWidget):
         self.title_label = QLabel(self.text["title"])
         self.title_label.setObjectName("title")
 
-        self.status_label = QLabel(self.text["starting"])
-        self.status_label.setObjectName("muted")
-
         self.account_label = QLabel("")
         self.account_label.setObjectName("account")
 
@@ -375,7 +373,6 @@ class Overlay(QWidget):
         header.addWidget(self.title_icon_label, 0, Qt.AlignVCenter)
         header.addWidget(self.title_label, 0, Qt.AlignVCenter)
         header.addStretch(1)
-        header.addWidget(self.status_label, 0, Qt.AlignVCenter)
 
         layout = QVBoxLayout(self.root)
         layout.setContentsMargins(10, 8, 10, 10)
@@ -459,23 +456,20 @@ class Overlay(QWidget):
         self.tray.show()
 
         self.timer = QTimer(self)
-        self.timer.setInterval(self.refresh_interval_ms)
+        self.timer.setInterval(POLL_INTERVAL_MS)
         self.timer.timeout.connect(self.refresh)
 
+        self.auth_timer = QTimer(self)
+        self.auth_timer.setInterval(AUTH_CHECK_INTERVAL_MS)
+        self.auth_timer.timeout.connect(self.check_auth_file)
+
         self.data_ready.connect(self.apply_data)
+        self.limits_ready.connect(self.apply_limits_update)
         self.error_ready.connect(self.apply_error)
 
         QTimer.singleShot(150, self.refresh)
         self.timer.start()
-
-    def load_refresh_interval(self):
-        try:
-            interval = int(self.settings.value("refresh_interval_ms", POLL_INTERVAL_MS))
-        except (TypeError, ValueError):
-            interval = POLL_INTERVAL_MS
-        if interval not in REFRESH_INTERVALS_MS:
-            return POLL_INTERVAL_MS
-        return interval
+        self.auth_timer.start()
 
     def load_size_preset(self):
         preset = str(self.settings.value("size_preset", "small"))
@@ -503,26 +497,11 @@ class Overlay(QWidget):
 
         menu.addAction(show_action)
         menu.addAction(refresh_action)
-        menu.addMenu(self.build_refresh_interval_menu())
         menu.addMenu(self.build_size_menu())
         menu.addMenu(self.build_theme_menu())
         menu.addAction(restart_action)
         menu.addSeparator()
         menu.addAction(quit_action)
-
-        return menu
-
-    def build_refresh_interval_menu(self):
-        menu = QMenu(self.text["refresh_interval"], self)
-        group = QActionGroup(menu)
-        group.setExclusive(True)
-
-        for interval_ms in REFRESH_INTERVALS_MS:
-            action = QAction(self.text[f"interval_{interval_ms}"], group)
-            action.setCheckable(True)
-            action.setChecked(interval_ms == self.refresh_interval_ms)
-            action.triggered.connect(lambda checked=False, ms=interval_ms: self.set_refresh_interval(ms))
-            menu.addAction(action)
 
         return menu
 
@@ -558,13 +537,6 @@ class Overlay(QWidget):
             menu.addAction(action)
 
         return menu
-
-    def set_refresh_interval(self, interval_ms):
-        if interval_ms not in REFRESH_INTERVALS_MS:
-            return
-        self.refresh_interval_ms = interval_ms
-        self.settings.setValue("refresh_interval_ms", interval_ms)
-        self.timer.setInterval(interval_ms)
 
     def set_size_preset(self, preset):
         if preset not in SIZE_PRESETS:
@@ -757,15 +729,42 @@ class Overlay(QWidget):
         if self.client is None or not self.client.alive:
             if self.client:
                 self.client.close()
-            self.client = CodexAppServerClient()
+            self.client = CodexAppServerClient(self.handle_rate_limits_notification)
         return self.client
+
+    def handle_rate_limits_notification(self, msg):
+        limits = self.extract_limits_from_notification(msg)
+        if limits:
+            self.limits_ready.emit(limits)
+
+    def extract_limits_from_notification(self, msg):
+        params = msg.get("params")
+        if not isinstance(params, dict):
+            return {}
+
+        for key in ("limits", "rateLimits"):
+            value = params.get(key)
+            if isinstance(value, dict):
+                return value
+
+        return params
+
+    def check_auth_file(self):
+        current_auth_mtime = self.get_auth_mtime()
+        if current_auth_mtime == self.auth_mtime:
+            return
+
+        self.auth_mtime = current_auth_mtime
+        if self.client:
+            self.client.close()
+            self.client = None
+        self.refresh()
 
     def refresh(self):
         if self.refreshing:
             return
 
         self.refreshing = True
-        self.status_label.setText(self.text["refreshing"])
 
         def worker():
             try:
@@ -773,8 +772,8 @@ class Overlay(QWidget):
                 if current_auth_mtime != self.auth_mtime:
                     if self.client:
                         self.client.close()
-                    self.client = None
                     self.auth_mtime = current_auth_mtime
+                    self.client = None
 
                 client = self.get_client()
                 account = client.request("account/read", {"refreshToken": False}, timeout=20)
@@ -794,7 +793,12 @@ class Overlay(QWidget):
         self.account_label.setText(f"{email}" + (f" · {plan}" if plan else ""))
 
         limits = data.get("limits") or {}
+        self.apply_limits(limits)
 
+    def apply_limits_update(self, limits):
+        self.apply_limits(limits)
+
+    def apply_limits(self, limits):
         self.clear_buckets()
 
         items = self.sorted_limit_items(limits)
@@ -805,7 +809,6 @@ class Overlay(QWidget):
             label = QLabel(self.text["no_limits"])
             self.buckets.addWidget(label)
 
-        self.status_label.setText(datetime.now().strftime("%H:%M:%S"))
         self.setFixedWidth(WINDOW_WIDTH)
         self.root.setFixedWidth(WINDOW_WIDTH)
         self.adjustSize()
@@ -818,7 +821,6 @@ class Overlay(QWidget):
         msg = QLabel(text[:260])
         msg.setWordWrap(True)
         self.buckets.addWidget(msg)
-        self.status_label.setText(self.text["error"])
         self.setFixedWidth(WINDOW_WIDTH)
         self.root.setFixedWidth(WINDOW_WIDTH)
         self.adjustSize()
