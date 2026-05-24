@@ -394,6 +394,9 @@ class Overlay(QWidget):
         self.drag_pos = None
         self.last_data = None
         self.account_text_full = ""
+        self.limit_rows = {}
+        self.no_limits_label = None
+        self.error_label = None
         self.settings = QSettings("ti-watsky", "codex-limits-overlay")
         self.is_ru = detect_russian_locale()
         self.text = TEXT["ru" if self.is_ru else "en"]
@@ -576,7 +579,9 @@ class Overlay(QWidget):
         self.apply_title_icon()
         self.apply_account_elide()
         if self.last_data:
-            self.apply_data(self.last_data)
+            self.apply_data(self.last_data, force_resize=True)
+        else:
+            self.adjustSize()
 
     def set_theme_mode(self, mode):
         if mode not in THEME_MODES:
@@ -756,8 +761,14 @@ class Overlay(QWidget):
         }
 
     def set_account_text(self, email, plan):
-        self.account_text_full = f"{email}" + (f" · {plan}" if plan else "")
+        text = f"{email}" + (f" · {plan}" if plan else "")
+        changed = text != self.account_text_full
+        self.account_text_full = text
+        if changed:
+            self.apply_window_width()
+            self.apply_layout_metrics()
         self.apply_account_elide()
+        return changed
 
     def apply_account_elide(self):
         if not self.account_text_full:
@@ -871,7 +882,11 @@ class Overlay(QWidget):
             key=lambda item: ((item[1].get("primary") or {}).get("windowDurationMins") or 999999999),
         )
 
-    def make_bucket_widget(self, name, bucket):
+    def limit_row_key(self, name, bucket):
+        primary = bucket.get("primary") or {}
+        return primary.get("windowDurationMins") or name
+
+    def bucket_values(self, name, bucket):
         primary = bucket.get("primary") or {}
         used = primary.get("usedPercent")
         duration = primary.get("windowDurationMins")
@@ -886,6 +901,16 @@ class Overlay(QWidget):
             left_percent = max(0, 100 - used_percent)
             percent_text = f"{left_percent}%"
             reset_text = self.format_reset(resets_at, duration)
+
+        return {
+            "title": self.bucket_title(duration, name),
+            "percent": percent_text,
+            "reset": reset_text,
+            "value": left_percent,
+        }
+
+    def make_bucket_widget(self, name, bucket):
+        values = self.bucket_values(name, bucket)
 
         box = QWidget()
         box_layout = QVBoxLayout(box)
@@ -902,13 +927,13 @@ class Overlay(QWidget):
         row.setColumnStretch(1, 1)
         row.setColumnStretch(2, 1)
 
-        title = QLabel(self.bucket_title(duration, name))
+        title = QLabel(values["title"])
         title.setObjectName("bucketName")
 
-        percent = QLabel(percent_text)
+        percent = QLabel(values["percent"])
         percent.setObjectName("bucketPercent")
 
-        reset = QLabel(reset_text)
+        reset = QLabel(values["reset"])
         reset.setObjectName("bucketReset")
 
         row.addWidget(title, 0, 0, alignment=Qt.AlignLeft)
@@ -919,12 +944,59 @@ class Overlay(QWidget):
         bar.setFixedHeight(self.preset()["progress_height"])
         bar.setFixedWidth(self.limit_block_width())
         bar.setRange(0, 100)
-        bar.setValue(left_percent)
+        bar.setValue(values["value"])
         bar.setTextVisible(False)
 
         box_layout.addWidget(row_widget)
         box_layout.addWidget(bar)
-        return box
+        self.buckets.addWidget(box)
+
+        return {
+            "box": box,
+            "box_layout": box_layout,
+            "row_widget": row_widget,
+            "title": title,
+            "percent": percent,
+            "reset": reset,
+            "bar": bar,
+        }
+
+    def update_bucket_widget(self, row, name, bucket):
+        values = self.bucket_values(name, bucket)
+
+        row["title"].setText(values["title"])
+        row["percent"].setText(values["percent"])
+        row["reset"].setText(values["reset"])
+        row["bar"].setValue(values["value"])
+        self.update_bucket_widget_size(row)
+
+    def update_bucket_widget_size(self, row):
+        width = self.limit_block_width()
+        row["box_layout"].setSpacing(self.preset()["row_spacing"])
+        row["row_widget"].setFixedWidth(width)
+        row["bar"].setFixedHeight(self.preset()["progress_height"])
+        row["bar"].setFixedWidth(width)
+
+    def hide_limit_rows(self):
+        changed = False
+        for row in self.limit_rows.values():
+            if row["box"].isVisible():
+                row["box"].hide()
+                changed = True
+        return changed
+
+    def get_no_limits_label(self):
+        if self.no_limits_label is None:
+            self.no_limits_label = QLabel(self.text["no_limits"])
+            self.buckets.addWidget(self.no_limits_label)
+        return self.no_limits_label
+
+    def get_error_label(self):
+        if self.error_label is None:
+            self.error_label = QLabel("")
+            self.error_label.setWordWrap(True)
+            self.buckets.addWidget(self.error_label)
+        return self.error_label
 
     def get_client(self):
         if self.client is None or not self.client.alive:
@@ -985,7 +1057,7 @@ class Overlay(QWidget):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def apply_data(self, data):
+    def apply_data(self, data, force_resize=False):
         self.refreshing = False
         self.last_data = data
 
@@ -993,44 +1065,77 @@ class Overlay(QWidget):
         email = account_obj.get("email") or self.text["unknown_account"]
         plan = account_obj.get("planType")
 
-        self.apply_window_width()
-        self.apply_style()
-        self.apply_layout_metrics()
-        self.apply_title_icon()
-        self.set_account_text(email, plan)
+        account_changed = self.set_account_text(email, plan)
         limits = data.get("limits") or {}
-        self.apply_limits(limits)
+        self.apply_limits(limits, force_resize=force_resize or account_changed)
 
     def apply_limits_update(self, limits):
         if self.last_data:
             self.last_data = {**self.last_data, "limits": limits}
         self.apply_limits(limits)
 
-    def apply_limits(self, limits):
-        self.clear_buckets()
-
+    def apply_limits(self, limits, force_resize=False):
         items = self.sorted_limit_items(limits)
+        layout_changed = force_resize
+
+        if self.error_label and self.error_label.isVisible():
+            self.error_label.hide()
+            layout_changed = True
+
         if items:
+            if self.no_limits_label and self.no_limits_label.isVisible():
+                self.no_limits_label.hide()
+                layout_changed = True
+
+            seen = set()
             for name, bucket in items:
-                self.buckets.addWidget(self.make_bucket_widget(name, bucket))
+                key = self.limit_row_key(name, bucket)
+                seen.add(key)
+                row = self.limit_rows.get(key)
+                if row is None:
+                    row = self.make_bucket_widget(name, bucket)
+                    self.limit_rows[key] = row
+                    layout_changed = True
+                else:
+                    self.update_bucket_widget(row, name, bucket)
+
+                if not row["box"].isVisible():
+                    row["box"].show()
+                    layout_changed = True
+
+            for key, row in self.limit_rows.items():
+                if key not in seen and row["box"].isVisible():
+                    row["box"].hide()
+                    layout_changed = True
         else:
-            label = QLabel(self.text["no_limits"])
-            self.buckets.addWidget(label)
+            if self.hide_limit_rows():
+                layout_changed = True
+            created_label = self.no_limits_label is None
+            label = self.get_no_limits_label()
+            if created_label or not label.isVisible():
+                label.show()
+                layout_changed = True
 
         self.apply_window_width()
         self.apply_layout_metrics()
         self.apply_account_elide()
-        self.adjustSize()
-        self.save_position()
+        for row in self.limit_rows.values():
+            self.update_bucket_widget_size(row)
+
+        if layout_changed:
+            self.adjustSize()
+            self.save_position()
 
     def apply_error(self, text):
         self.refreshing = False
-        self.clear_buckets()
         self.account_label.setText(self.text["error"])
         self.account_text_full = ""
-        msg = QLabel(text[:260])
-        msg.setWordWrap(True)
-        self.buckets.addWidget(msg)
+        self.hide_limit_rows()
+        if self.no_limits_label:
+            self.no_limits_label.hide()
+        msg = self.get_error_label()
+        msg.setText(text[:260])
+        msg.show()
         self.apply_window_width()
         self.adjustSize()
 
