@@ -4,6 +4,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+dist/
+build/
+*.spec.bak
 .env
 *.auth.json
 auth.json
